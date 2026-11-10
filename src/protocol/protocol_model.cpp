@@ -83,10 +83,52 @@ QJsonObject node_to_json(const protocol_node& node) {
     };
 }
 
+bool is_better_match(const range_match& candidate, const range_match& current) {
+    if (candidate.bytes.length != current.bytes.length) {
+        return candidate.bytes.length < current.bytes.length;
+    }
+    return candidate.is_field && !current.is_field;
+}
+
+void find_range(
+    const protocol_node& node,
+    const std::size_t byte_offset,
+    std::optional<range_match>& best) {
+    if (!node.bytes.contains(byte_offset)) {
+        return;
+    }
+
+    const range_match node_match{node.name, node.bytes, false};
+    if (!best.has_value() || is_better_match(node_match, best.value())) {
+        best = node_match;
+    }
+
+    for (const auto& field : node.fields) {
+        if (!field.bytes.contains(byte_offset)) {
+            continue;
+        }
+        const range_match field_match{field.name, field.bytes, true};
+        if (!best.has_value() || is_better_match(field_match, best.value())) {
+            best = field_match;
+        }
+    }
+    for (const auto& child : node.children) {
+        find_range(child, byte_offset, best);
+    }
+}
+
 }  // namespace
 
 bool byte_range::contains(const std::size_t byte_offset) const noexcept {
     return byte_offset >= offset && byte_offset - offset < length;
+}
+
+std::optional<range_match> find_most_specific_range(
+    const protocol_node& root,
+    const std::size_t byte_offset) {
+    std::optional<range_match> best;
+    find_range(root, byte_offset, best);
+    return best;
 }
 
 std::string to_json(const protocol_node& node) {

@@ -41,6 +41,16 @@ struct protocol_node {
     std::vector<std::string> warnings;
 };
 
+struct range_match {
+    std::string name;
+    byte_range bytes;
+    bool is_field{false};
+};
+
+[[nodiscard]] std::optional<range_match> find_most_specific_range(
+    const protocol_node& root,
+    std::size_t byte_offset);
+
 [[nodiscard]] std::string to_json(const protocol_node& node);
 
 }  // namespace netscope::protocol
