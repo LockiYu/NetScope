@@ -65,5 +65,18 @@ target_link_libraries(netscope_protocol_model_test PRIVATE
 
 gtest_discover_tests(netscope_protocol_model_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_network_parser_test
+    unit/network_parser_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_network_parser_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_network_parser_test DISCOVERY_MODE PRE_TEST)
+
+
 
 
