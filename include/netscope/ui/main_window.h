@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class QPlainTextEdit;
@@ -29,6 +30,8 @@ private:
     QTreeWidget* protocol_tree_{nullptr};
     QPlainTextEdit* hex_view_{nullptr};
     std::vector<std::shared_ptr<const packet::packet_record>> packets_;
+    std::vector<int> byte_hex_positions_;
+    std::optional<std::size_t> displayed_packet_index_;
 };
 
 }  // namespace netscope::ui
