@@ -73,17 +73,48 @@ std::string ether_type_name(const std::uint16_t value) {
 
 std::string ip_protocol_name(const std::uint8_t value) {
     switch (value) {
+    case 0U:
+        return "Hop-by-Hop Options (0)";
     case 1U:
         return "ICMP (1)";
     case 6U:
         return "TCP (6)";
     case 17U:
         return "UDP (17)";
+    case 43U:
+        return "Routing (43)";
+    case 44U:
+        return "Fragment (44)";
+    case 51U:
+        return "Authentication Header (51)";
     case 58U:
         return "ICMPv6 (58)";
+    case 60U:
+        return "Destination Options (60)";
     default:
         return "Unknown (" + std::to_string(value) + ')';
     }
+}
+
+std::string ipv6_extension_name(const std::uint8_t type) {
+    switch (type) {
+    case 0U:
+        return "IPv6 Hop-by-Hop Options";
+    case 43U:
+        return "IPv6 Routing Header";
+    case 44U:
+        return "IPv6 Fragment Header";
+    case 51U:
+        return "IP Authentication Header";
+    case 60U:
+        return "IPv6 Destination Options";
+    default:
+        return "IPv6 Extension Header";
+    }
+}
+
+bool is_ipv6_extension_header(const std::uint8_t type) noexcept {
+    return type == 0U || type == 43U || type == 44U || type == 51U || type == 60U;
 }
 
 protocol_field field(
@@ -556,13 +587,80 @@ protocol_node parse_ipv6(const byte_view frame, const std::size_t offset) {
     if (static_cast<std::size_t>(payload_length) > available - 40U) {
         node.warnings.push_back("truncated IPv6 payload");
     }
-    add_transport_child(
-        node,
-        frame,
-        next_header,
-        offset + 40U,
-        std::min(static_cast<std::size_t>(payload_length), available - 40U),
-        true);
+    auto current_header = next_header;
+    auto cursor = offset + 40U;
+    auto remaining = std::min(
+        static_cast<std::size_t>(payload_length), available - 40U);
+    std::size_t extension_count{0U};
+    constexpr std::size_t max_extension_headers{16U};
+
+    while (is_ipv6_extension_header(current_header) &&
+           extension_count < max_extension_headers) {
+        if (remaining < 2U) {
+            node.warnings.push_back("truncated IPv6 extension header");
+            return node;
+        }
+
+        const auto following_header = frame.at(cursor);
+        std::size_t extension_length{0U};
+        if (current_header == 44U) {
+            extension_length = 8U;
+        } else if (current_header == 51U) {
+            extension_length =
+                (static_cast<std::size_t>(frame.at(cursor + 1U)) + 2U) * 4U;
+        } else {
+            extension_length =
+                (static_cast<std::size_t>(frame.at(cursor + 1U)) + 1U) * 8U;
+        }
+
+        protocol_node extension{
+            ipv6_extension_name(current_header),
+            byte_range{cursor, std::min(extension_length, remaining)},
+            {}, {}, {}};
+        extension.fields.push_back(field(
+            "next_header", std::to_string(following_header),
+            ip_protocol_name(following_header), cursor, 1U));
+        extension.fields.push_back(field(
+            "header_length", std::to_string(extension_length),
+            std::to_string(extension_length) + " bytes", cursor + 1U, 1U));
+
+        if (extension_length > remaining || extension_length < 8U) {
+            extension.warnings.push_back("invalid or truncated IPv6 extension header");
+            node.children.push_back(std::move(extension));
+            return node;
+        }
+
+        if (current_header == 44U) {
+            const auto fragment_data = read_u16_be(frame, cursor + 2U);
+            extension.fields.push_back(field(
+                "fragment_offset", std::to_string(fragment_data >> 3U),
+                std::to_string(fragment_data >> 3U), cursor + 2U, 2U));
+            extension.fields.push_back(field(
+                "more_fragments", std::to_string(fragment_data & 0x01U),
+                (fragment_data & 0x01U) != 0U ? "set" : "not set", cursor + 2U, 2U));
+            extension.fields.push_back(field(
+                "identification", hex_value(read_u32_be(frame, cursor + 4U), 8),
+                hex_value(read_u32_be(frame, cursor + 4U), 8), cursor + 4U, 4U));
+        } else if (extension_length > 2U) {
+            extension.fields.push_back(field(
+                "data", "", std::to_string(extension_length - 2U) + " bytes",
+                cursor + 2U, extension_length - 2U));
+        }
+
+        node.children.push_back(std::move(extension));
+        current_header = following_header;
+        cursor += extension_length;
+        remaining -= extension_length;
+        ++extension_count;
+    }
+
+    if (extension_count == max_extension_headers &&
+        is_ipv6_extension_header(current_header)) {
+        node.warnings.push_back("too many IPv6 extension headers");
+        return node;
+    }
+
+    add_transport_child(node, frame, current_header, cursor, remaining, true);
     return node;
 }
 
