@@ -14,12 +14,14 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTableView>
+#include <QTemporaryDir>
 #include <QTreeWidget>
 
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <thread>
 
@@ -240,6 +242,34 @@ TEST(main_window_test, connects_capture_actions_to_the_multi_interface_runner) {
     EXPECT_EQ(table->model()->rowCount(), 1);
     EXPECT_TRUE(start->isEnabled());
     EXPECT_FALSE(stop->isEnabled());
+}
+
+TEST(main_window_test, loads_and_saves_pcap_sessions) {
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto input = std::filesystem::path{directory.path().toStdString()} / "input.pcap";
+    const auto output = std::filesystem::path{directory.path().toStdString()} / "output.pcap";
+    auto bytes = sample_bytes();
+    netscope::capture::write_pcap_file(
+        input,
+        1,
+        262144,
+        {netscope::capture::captured_packet{
+            std::chrono::system_clock::now(),
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(bytes.size()),
+            std::move(bytes),
+        }});
+    netscope::ui::main_window window;
+
+    window.load_pcap(input);
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    ASSERT_EQ(table->model()->rowCount(), 1);
+
+    window.save_pcap(output);
+    const auto roundtrip = netscope::capture::read_pcap_file(output);
+    ASSERT_EQ(roundtrip.packets.size(), 1U);
+    EXPECT_EQ(roundtrip.packets.front().bytes, sample_bytes());
 }
 
 }  // namespace
