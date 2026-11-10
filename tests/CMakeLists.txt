@@ -89,6 +89,19 @@ target_link_libraries(netscope_checksum_test PRIVATE
 
 gtest_discover_tests(netscope_checksum_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_pcap_file_test
+    unit/pcap_file_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_pcap_file_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_pcap_file_test DISCOVERY_MODE PRE_TEST)
+
+
 
 
 
