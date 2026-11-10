@@ -170,5 +170,25 @@ TEST(network_parser_test, parses_icmpv6_header) {
     EXPECT_EQ(find_field(*icmpv6, "type")->display_value, "Echo request (128)");
 }
 
+TEST(network_parser_test, walks_ipv6_extension_headers_to_udp) {
+    const std::vector<std::uint8_t> frame{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x86, 0xdd,
+        0x60, 0, 0, 0, 0, 16, 0, 64,
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+        17, 0, 1, 0, 0, 0, 0, 0,
+        0x14, 0xe9, 0x00, 0x35, 0x00, 0x08, 0, 0,
+    };
+
+    const auto parsed = netscope::protocol::parse_ethernet_frame(byte_view{frame});
+    const auto* extension = find_node(parsed, "IPv6 Hop-by-Hop Options");
+    const auto* udp = find_node(parsed, "User Datagram Protocol");
+
+    ASSERT_NE(extension, nullptr);
+    ASSERT_NE(udp, nullptr);
+    EXPECT_EQ(find_field(*extension, "next_header")->display_value, "UDP (17)");
+    EXPECT_EQ(find_field(*udp, "destination_port")->display_value, "53 (DNS)");
+}
+
 }  // namespace
 
