@@ -3,6 +3,7 @@
 #include "netscope/capture/pcap_file.h"
 
 #include <chrono>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -70,8 +71,8 @@ public:
 
     capture_session(const capture_session&) = delete;
     capture_session& operator=(const capture_session&) = delete;
-    capture_session(capture_session&&) noexcept = default;
-    capture_session& operator=(capture_session&&) noexcept = default;
+    capture_session(capture_session&& other) noexcept;
+    capture_session& operator=(capture_session&& other) noexcept;
 
     [[nodiscard]] capture_state state() const noexcept;
     [[nodiscard]] const std::string& interface_name() const noexcept;
@@ -84,7 +85,7 @@ public:
 private:
     std::unique_ptr<capture_backend> backend_;
     std::string interface_name_;
-    capture_state state_{capture_state::active};
+    std::atomic<capture_state> state_{capture_state::active};
 };
 
 [[nodiscard]] std::optional<std::string> validate_capture_options(
