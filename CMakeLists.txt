@@ -56,6 +56,7 @@ endif()
 
 add_library(netscope_core STATIC
     src/build_info.cpp
+    src/capture/live_capture.cpp
     src/capture/pcap_file.cpp
     src/packet/byte_reader.cpp
     src/protocol/checksum.cpp
