@@ -222,8 +222,24 @@ capture_session::~capture_session() {
     stop();
 }
 
+capture_session::capture_session(capture_session&& other) noexcept
+    : backend_{std::move(other.backend_)},
+      interface_name_{std::move(other.interface_name_)},
+      state_{other.state_.exchange(capture_state::stopped)} {}
+
+capture_session& capture_session::operator=(capture_session&& other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+    stop();
+    backend_ = std::move(other.backend_);
+    interface_name_ = std::move(other.interface_name_);
+    state_.store(other.state_.exchange(capture_state::stopped));
+    return *this;
+}
+
 capture_state capture_session::state() const noexcept {
-    return state_;
+    return state_.load();
 }
 
 const std::string& capture_session::interface_name() const noexcept {
@@ -231,7 +247,7 @@ const std::string& capture_session::interface_name() const noexcept {
 }
 
 std::optional<captured_packet> capture_session::next_packet() {
-    if (state_ != capture_state::active) {
+    if (state_.load() != capture_state::active) {
         return std::nullopt;
     }
     return backend_->next_packet();
@@ -242,23 +258,20 @@ capture_statistics capture_session::statistics() const {
 }
 
 void capture_session::pause() noexcept {
-    if (state_ == capture_state::active) {
-        state_ = capture_state::paused;
-    }
+    auto expected = capture_state::active;
+    static_cast<void>(state_.compare_exchange_strong(expected, capture_state::paused));
 }
 
 void capture_session::resume() noexcept {
-    if (state_ == capture_state::paused) {
-        state_ = capture_state::active;
-    }
+    auto expected = capture_state::paused;
+    static_cast<void>(state_.compare_exchange_strong(expected, capture_state::active));
 }
 
 void capture_session::stop() noexcept {
-    if (state_ != capture_state::stopped) {
+    if (state_.exchange(capture_state::stopped) != capture_state::stopped) {
         if (backend_) {
             backend_->break_capture();
         }
-        state_ = capture_state::stopped;
     }
 }
 
