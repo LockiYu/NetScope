@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,6 +38,8 @@ public:
     ~main_window() override;
 
     void append_packet(std::shared_ptr<const packet::packet_record> packet);
+    void load_pcap(const std::filesystem::path& path);
+    void save_pcap(const std::filesystem::path& path) const;
 
 private:
     void show_packet(std::size_t index);
@@ -68,6 +71,7 @@ private:
     std::atomic<bool> drain_scheduled_{false};
     bool merge_flush_scheduled_{false};
     std::optional<std::chrono::system_clock::time_point> latest_capture_time_;
+    int current_snapshot_length_{262144};
 };
 
 }  // namespace netscope::ui
