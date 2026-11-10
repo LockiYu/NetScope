@@ -53,6 +53,20 @@ if(NETSCOPE_ENABLE_COVERAGE)
     target_link_options(netscope_project_options INTERFACE -fprofile-instr-generate)
 endif()
 
+add_library(netscope_core STATIC
+    src/build_info.cpp
+)
+
+target_include_directories(netscope_core PUBLIC
+    "${PROJECT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(netscope_core PUBLIC
+    netscope_project_options
+    PCAP::PCAP
+    Qt6::Core
+)
+
 if(NETSCOPE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
