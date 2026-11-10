@@ -94,22 +94,20 @@ void find_range(
     const protocol_node& node,
     const std::size_t byte_offset,
     std::optional<range_match>& best) {
-    if (!node.bytes.contains(byte_offset)) {
-        return;
-    }
-
-    const range_match node_match{node.name, node.bytes, false};
-    if (!best.has_value() || is_better_match(node_match, best.value())) {
-        best = node_match;
-    }
-
-    for (const auto& field : node.fields) {
-        if (!field.bytes.contains(byte_offset)) {
-            continue;
+    if (node.bytes.contains(byte_offset)) {
+        const range_match node_match{node.name, node.bytes, false};
+        if (!best.has_value() || is_better_match(node_match, best.value())) {
+            best = node_match;
         }
-        const range_match field_match{field.name, field.bytes, true};
-        if (!best.has_value() || is_better_match(field_match, best.value())) {
-            best = field_match;
+
+        for (const auto& field : node.fields) {
+            if (!field.bytes.contains(byte_offset)) {
+                continue;
+            }
+            const range_match field_match{field.name, field.bytes, true};
+            if (!best.has_value() || is_better_match(field_match, best.value())) {
+                best = field_match;
+            }
         }
     }
     for (const auto& child : node.children) {

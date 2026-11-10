@@ -16,6 +16,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QStandardItemModel>
 #include <QItemSelectionModel>
@@ -24,14 +25,15 @@
 #include <QTableView>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QTextCursor>
 #include <QVBoxLayout>
 #include <QWidget>
 
 #include <exception>
 #include <chrono>
+#include <algorithm>
 #include <cctype>
-#include <iomanip>
-#include <sstream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -61,34 +63,46 @@ QString absolute_time(
         .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
-QString format_hex(const std::vector<std::uint8_t>& bytes) {
-    std::ostringstream output;
+struct formatted_hex {
+    QString text;
+    std::vector<int> byte_positions;
+};
+
+formatted_hex format_hex(const std::vector<std::uint8_t>& bytes) {
+    formatted_hex output;
+    output.byte_positions.reserve(bytes.size());
     constexpr std::size_t bytes_per_line{16U};
     for (std::size_t offset = 0U; offset < bytes.size(); offset += bytes_per_line) {
-        output << std::hex << std::setfill('0') << std::setw(6) << offset << "  ";
+        output.text += QStringLiteral("%1  ").arg(
+            static_cast<qulonglong>(offset), 6, 16, QLatin1Char('0'));
         for (std::size_t column = 0U; column < bytes_per_line; ++column) {
             if (offset + column < bytes.size()) {
-                output << std::setw(2)
-                       << static_cast<unsigned int>(bytes[offset + column]) << ' ';
+                output.byte_positions.push_back(static_cast<int>(output.text.size()));
+                output.text += QStringLiteral("%1 ").arg(
+                    static_cast<unsigned int>(bytes[offset + column]),
+                    2,
+                    16,
+                    QLatin1Char('0'));
             } else {
-                output << "   ";
+                output.text += QStringLiteral("   ");
             }
             if (column == 7U) {
-                output << ' ';
+                output.text += QLatin1Char(' ');
             }
         }
-        output << " |";
+        output.text += QStringLiteral(" |");
         for (std::size_t column = 0U;
              column < bytes_per_line && offset + column < bytes.size();
              ++column) {
             const auto value = bytes[offset + column];
-            output << (std::isprint(static_cast<unsigned char>(value)) != 0
-                ? static_cast<char>(value)
-                : '.');
+            output.text += QLatin1Char{
+                std::isprint(static_cast<unsigned char>(value)) != 0
+                    ? static_cast<char>(value)
+                    : '.'};
         }
-        output << "|\n";
+        output.text += QStringLiteral("|\n");
     }
-    return QString::fromStdString(output.str());
+    return output;
 }
 
 void add_protocol_node(
@@ -106,6 +120,7 @@ void add_protocol_node(
             .arg(static_cast<qulonglong>(node.bytes.offset)));
     item->setData(0, Qt::UserRole, static_cast<qulonglong>(node.bytes.offset));
     item->setData(0, Qt::UserRole + 1, static_cast<qulonglong>(node.bytes.length));
+    item->setData(0, Qt::UserRole + 2, false);
 
     for (const auto& field : node.fields) {
         auto* const field_item = new QTreeWidgetItem{item};
@@ -115,6 +130,7 @@ void add_protocol_node(
             0, Qt::UserRole, static_cast<qulonglong>(field.bytes.offset));
         field_item->setData(
             0, Qt::UserRole + 1, static_cast<qulonglong>(field.bytes.length));
+        field_item->setData(0, Qt::UserRole + 2, true);
         if (!field.warnings.empty()) {
             field_item->setToolTip(1, QString::fromStdString(field.warnings.front()));
         }
@@ -122,6 +138,50 @@ void add_protocol_node(
     for (const auto& child : node.children) {
         add_protocol_node(tree, item, child);
     }
+}
+
+QTreeWidgetItem* find_tree_item(
+    QTreeWidgetItem* const root,
+    const netscope::protocol::range_match& match) {
+    const auto offset = root->data(0, Qt::UserRole).toULongLong();
+    const auto length = root->data(0, Qt::UserRole + 1).toULongLong();
+    const auto is_field = root->data(0, Qt::UserRole + 2).toBool();
+    if (offset == match.bytes.offset && length == match.bytes.length &&
+        is_field == match.is_field && root->text(0) == QString::fromStdString(match.name)) {
+        return root;
+    }
+    for (int index = 0; index < root->childCount(); ++index) {
+        if (auto* const item = find_tree_item(root->child(index), match); item != nullptr) {
+            return item;
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem* find_tree_item(
+    QTreeWidget* const tree,
+    const netscope::protocol::range_match& match) {
+    for (int index = 0; index < tree->topLevelItemCount(); ++index) {
+        if (auto* const item = find_tree_item(tree->topLevelItem(index), match);
+            item != nullptr) {
+            return item;
+        }
+    }
+    return nullptr;
+}
+
+std::optional<std::size_t> byte_at_text_position(
+    const std::vector<int>& positions,
+    const int text_position) {
+    const auto after = std::upper_bound(positions.begin(), positions.end(), text_position);
+    if (after == positions.begin()) {
+        return std::nullopt;
+    }
+    const auto candidate = std::prev(after);
+    if (text_position > *candidate + 1) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(std::distance(positions.begin(), candidate));
 }
 
 }  // namespace
@@ -272,6 +332,59 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
                                           .toULongLong();
             show_packet(static_cast<std::size_t>(stored_index));
         });
+
+    connect(
+        protocol_tree_,
+        &QTreeWidget::currentItemChanged,
+        this,
+        [this](QTreeWidgetItem* const current) {
+            if (current == nullptr || byte_hex_positions_.empty()) {
+                return;
+            }
+            const auto offset = static_cast<std::size_t>(
+                current->data(0, Qt::UserRole).toULongLong());
+            const auto length = static_cast<std::size_t>(
+                current->data(0, Qt::UserRole + 1).toULongLong());
+            if (length == 0U || offset >= byte_hex_positions_.size() ||
+                length > byte_hex_positions_.size() - offset) {
+                return;
+            }
+            const QSignalBlocker blocker{hex_view_};
+            QTextCursor cursor{hex_view_->document()};
+            cursor.setPosition(byte_hex_positions_[offset]);
+            cursor.setPosition(
+                byte_hex_positions_[offset + length - 1U] + 2,
+                QTextCursor::KeepAnchor);
+            hex_view_->setTextCursor(cursor);
+            hex_view_->ensureCursorVisible();
+        });
+
+    connect(
+        hex_view_,
+        &QPlainTextEdit::selectionChanged,
+        this,
+        [this] {
+            if (!displayed_packet_index_.has_value()) {
+                return;
+            }
+            const auto byte_offset = byte_at_text_position(
+                byte_hex_positions_, hex_view_->textCursor().position());
+            if (!byte_offset.has_value()) {
+                return;
+            }
+            const auto match = protocol::find_most_specific_range(
+                packets_[displayed_packet_index_.value()]->analysis,
+                byte_offset.value());
+            if (!match.has_value()) {
+                return;
+            }
+            if (auto* const item = find_tree_item(protocol_tree_, match.value());
+                item != nullptr) {
+                const QSignalBlocker blocker{protocol_tree_};
+                protocol_tree_->setCurrentItem(item);
+                protocol_tree_->scrollToItem(item);
+            }
+        });
 }
 
 void main_window::append_packet(std::shared_ptr<const packet::packet_record> packet) {
@@ -312,10 +425,13 @@ void main_window::show_packet(const std::size_t index) {
         return;
     }
     const auto& record = *packets_[index];
+    displayed_packet_index_ = index;
     protocol_tree_->clear();
     add_protocol_node(protocol_tree_, nullptr, record.analysis);
     protocol_tree_->expandToDepth(1);
-    hex_view_->setPlainText(format_hex(record.capture.packet.bytes));
+    auto formatted = format_hex(record.capture.packet.bytes);
+    byte_hex_positions_ = std::move(formatted.byte_positions);
+    hex_view_->setPlainText(formatted.text);
 }
 
 }  // namespace netscope::ui
