@@ -60,6 +60,7 @@ add_library(netscope_core STATIC
     src/capture/packet_merger.cpp
     src/capture/pcap_file.cpp
     src/packet/byte_reader.cpp
+    src/packet/packet_repository.cpp
     src/protocol/checksum.cpp
     src/protocol/packet_parser.cpp
     src/protocol/protocol_model.cpp
