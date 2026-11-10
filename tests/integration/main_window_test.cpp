@@ -17,6 +17,28 @@
 
 namespace {
 
+QTreeWidgetItem* find_item(QTreeWidgetItem* const root, const QString& name) {
+    if (root->text(0) == name) {
+        return root;
+    }
+    for (int index = 0; index < root->childCount(); ++index) {
+        if (auto* const match = find_item(root->child(index), name); match != nullptr) {
+            return match;
+        }
+    }
+    return nullptr;
+}
+
+QTreeWidgetItem* find_item(QTreeWidget* const tree, const QString& name) {
+    for (int index = 0; index < tree->topLevelItemCount(); ++index) {
+        if (auto* const match = find_item(tree->topLevelItem(index), name);
+            match != nullptr) {
+            return match;
+        }
+    }
+    return nullptr;
+}
+
 std::shared_ptr<const netscope::packet::packet_record> make_record() {
     std::vector<std::uint8_t> bytes{
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
@@ -85,6 +107,36 @@ TEST(main_window_test, updates_protocol_and_hex_views_for_selected_packet) {
     ASSERT_EQ(packet_table->model()->rowCount(), 1);
     EXPECT_GT(protocol_tree->topLevelItemCount(), 0);
     EXPECT_TRUE(hex_view->toPlainText().contains(QStringLiteral("00 01 02 03")));
+}
+
+TEST(main_window_test, synchronizes_protocol_fields_and_hex_byte_selection) {
+    netscope::ui::main_window window;
+    auto* const packet_table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const protocol_tree = window.findChild<QTreeWidget*>(QStringLiteral("protocolTree"));
+    auto* const hex_view = window.findChild<QPlainTextEdit*>(QStringLiteral("hexView"));
+
+    window.append_packet(make_record());
+    packet_table->selectRow(0);
+    QApplication::processEvents();
+
+    auto* const source_address =
+        find_item(protocol_tree, QStringLiteral("source_address"));
+    ASSERT_NE(source_address, nullptr);
+    protocol_tree->setCurrentItem(source_address);
+    QApplication::processEvents();
+    EXPECT_TRUE(
+        hex_view->textCursor().selectedText().contains(QStringLiteral("c0 a8 01 0a")));
+
+    QTextCursor cursor = hex_view->textCursor();
+    cursor.clearSelection();
+    const auto source_text = hex_view->toPlainText().indexOf(QStringLiteral("c0 a8 01 0a"));
+    ASSERT_GE(source_text, 0);
+    cursor.setPosition(static_cast<int>(source_text + 1));
+    hex_view->setTextCursor(cursor);
+    QApplication::processEvents();
+
+    ASSERT_NE(protocol_tree->currentItem(), nullptr);
+    EXPECT_EQ(protocol_tree->currentItem()->text(0), QStringLiteral("source_address"));
 }
 
 }  // namespace
