@@ -113,6 +113,19 @@ target_link_libraries(netscope_live_capture_test PRIVATE
 
 gtest_discover_tests(netscope_live_capture_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_packet_merger_test
+    unit/packet_merger_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_packet_merger_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_packet_merger_test DISCOVERY_MODE PRE_TEST)
+
+
 
 
 
