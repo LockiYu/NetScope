@@ -17,9 +17,9 @@ TEST(byte_inspector_test, parses_flexible_hex_patterns_and_rejects_invalid_input
     EXPECT_EQ(
         parse_hex_pattern("de ad:BE-EF"),
         (std::vector<std::uint8_t>{0xde, 0xad, 0xbe, 0xef}));
-    EXPECT_THROW(parse_hex_pattern("abc"), std::invalid_argument);
-    EXPECT_THROW(parse_hex_pattern("zz"), std::invalid_argument);
-    EXPECT_THROW(parse_hex_pattern("   "), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parse_hex_pattern("abc")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parse_hex_pattern("zz")), std::invalid_argument);
+    EXPECT_THROW(static_cast<void>(parse_hex_pattern("   ")), std::invalid_argument);
 }
 
 TEST(byte_inspector_test, finds_all_overlapping_byte_sequences) {
@@ -48,10 +48,10 @@ TEST(byte_inspector_test, rejects_unsupported_widths_and_out_of_bounds_ranges) {
     const std::vector<std::uint8_t> bytes{1, 2, 3, 4};
 
     EXPECT_THROW(
-        interpret_unsigned(bytes, 0U, 3U, byte_order::big_endian),
+        static_cast<void>(interpret_unsigned(bytes, 0U, 3U, byte_order::big_endian)),
         std::invalid_argument);
     EXPECT_THROW(
-        interpret_unsigned(bytes, 2U, 4U, byte_order::big_endian),
+        static_cast<void>(interpret_unsigned(bytes, 2U, 4U, byte_order::big_endian)),
         std::out_of_range);
 }
 
