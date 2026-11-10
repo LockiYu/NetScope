@@ -239,6 +239,15 @@ main_window::main_window(
     filter_edit->setClearButtonEnabled(true);
     filter_edit->setMinimumWidth(260);
     toolbar->addWidget(filter_edit);
+    toolbar->addSeparator();
+    toolbar->addWidget(new QLabel{QStringLiteral("Display filter:"), toolbar});
+    display_filter_edit_ = new QLineEdit{toolbar};
+    display_filter_edit_->setObjectName(QStringLiteral("displayFilterEdit"));
+    display_filter_edit_->setPlaceholderText(
+        QStringLiteral("tcp and ip.src == 192.168.1.1"));
+    display_filter_edit_->setClearButtonEnabled(true);
+    display_filter_edit_->setMinimumWidth(280);
+    toolbar->addWidget(display_filter_edit_);
 
     auto* const workspace = new QSplitter{Qt::Vertical, this};
     workspace->setObjectName(QStringLiteral("workspaceSplitter"));
@@ -621,6 +630,11 @@ main_window::main_window(
             statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
         }
     });
+    connect(
+        display_filter_edit_,
+        &QLineEdit::returnPressed,
+        this,
+        &main_window::apply_display_filter);
 }
 
 main_window::~main_window() {
@@ -658,6 +672,9 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         item->setData(static_cast<qulonglong>(stored_index), Qt::UserRole);
     }
     packet_model_->appendRow(row);
+    if (display_filter_.has_value()) {
+        apply_display_filter();
+    }
 }
 
 void main_window::load_pcap(const std::filesystem::path& path) {
@@ -837,6 +854,40 @@ void main_window::stop_capture() {
     statusBar()->showMessage(
         QStringLiteral("Capture stopped — %1 packet(s)")
             .arg(static_cast<qulonglong>(repository_.size())));
+}
+
+void main_window::apply_display_filter() {
+    try {
+        display_filter_.emplace(display_filter_edit_->text().trimmed().toStdString());
+        display_filter_edit_->setStyleSheet({});
+        display_filter_edit_->setToolTip({});
+    } catch (const analysis::filter_error& error) {
+        display_filter_edit_->setStyleSheet(QStringLiteral("QLineEdit { border: 1px solid #c94b4b; }"));
+        display_filter_edit_->setToolTip(
+            QStringLiteral("Position %1: %2")
+                .arg(static_cast<qulonglong>(error.position()))
+                .arg(QString::fromUtf8(error.what())));
+        statusBar()->showMessage(display_filter_edit_->toolTip(), 6000);
+        return;
+    }
+
+    auto* const table = qobject_cast<QTableView*>(packet_model_->parent());
+    std::size_t visible{0U};
+    for (int row = 0; row < packet_model_->rowCount(); ++row) {
+        const auto stored_index = static_cast<std::size_t>(
+            packet_model_->index(row, 0).data(Qt::UserRole).toULongLong());
+        const bool matches = stored_index < packets_.size() &&
+            display_filter_->matches(*packets_[stored_index]);
+        table->setRowHidden(row, !matches);
+        if (matches) {
+            ++visible;
+        }
+    }
+    statusBar()->showMessage(
+        QStringLiteral("Display filter: %1 of %2 packet(s)")
+            .arg(static_cast<qulonglong>(visible))
+            .arg(static_cast<qulonglong>(packets_.size())),
+        4000);
 }
 
 }  // namespace netscope::ui

@@ -2,6 +2,7 @@
 
 #include "netscope/capture/capture_runner.h"
 #include "netscope/capture/packet_merger.h"
+#include "netscope/analysis/display_filter.h"
 #include "netscope/packet/packet_repository.h"
 
 #include <QMainWindow>
@@ -19,6 +20,7 @@ class QPlainTextEdit;
 class QAction;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QStandardItemModel;
 class QSpinBox;
 class QTreeWidget;
@@ -48,6 +50,7 @@ private:
     void enqueue_captured_packet(capture::interface_packet packet);
     void drain_captured_packets(bool flush_all);
     void stop_capture();
+    void apply_display_filter();
 
     QStandardItemModel* packet_model_{nullptr};
     QTreeWidget* protocol_tree_{nullptr};
@@ -56,6 +59,7 @@ private:
     QComboBox* integer_endian_{nullptr};
     QLabel* integer_value_{nullptr};
     QSpinBox* offset_spin_{nullptr};
+    QLineEdit* display_filter_edit_{nullptr};
     QAction* start_action_{nullptr};
     QAction* pause_action_{nullptr};
     QAction* stop_action_{nullptr};
@@ -72,6 +76,7 @@ private:
     bool merge_flush_scheduled_{false};
     std::optional<std::chrono::system_clock::time_point> latest_capture_time_;
     int current_snapshot_length_{262144};
+    std::optional<analysis::display_filter> display_filter_;
 };
 
 }  // namespace netscope::ui
