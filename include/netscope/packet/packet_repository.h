@@ -31,10 +31,10 @@ public:
         capture::merged_packet packet);
     [[nodiscard]] std::shared_ptr<const packet_record> at(std::size_t index) const;
     [[nodiscard]] std::vector<std::shared_ptr<const packet_record>> snapshot() const;
-    [[nodiscard]] std::size_t size() const noexcept;
+    [[nodiscard]] std::size_t size() const;
     [[nodiscard]] std::size_t capacity() const noexcept;
-    [[nodiscard]] std::uint64_t evicted_count() const noexcept;
-    void clear() noexcept;
+    [[nodiscard]] std::uint64_t evicted_count() const;
+    void clear();
 
 private:
     std::size_t capacity_;
