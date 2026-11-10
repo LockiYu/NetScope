@@ -11,9 +11,7 @@ target_include_directories(netscope_toolchain_test PRIVATE
 )
 
 target_link_libraries(netscope_toolchain_test PRIVATE
-    netscope_project_options
-    PCAP::PCAP
-    Qt6::Core
+    netscope_core
     GTest::gtest_main
 )
 
