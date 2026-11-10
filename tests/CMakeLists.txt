@@ -161,6 +161,18 @@ target_link_libraries(netscope_capture_runner_test PRIVATE
 
 gtest_discover_tests(netscope_capture_runner_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_display_filter_test
+    unit/display_filter_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_display_filter_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_display_filter_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
