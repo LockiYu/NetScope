@@ -35,4 +35,27 @@ gtest_discover_tests(netscope_main_window_test
     PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
 )
 
+add_executable(netscope_byte_reader_test
+    unit/byte_reader_test.cpp
+)
+
+target_link_libraries(netscope_byte_reader_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_byte_reader_test DISCOVERY_MODE PRE_TEST)
+
+add_executable(netscope_protocol_model_test
+    unit/protocol_model_test.cpp
+)
+
+target_link_libraries(netscope_protocol_model_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_protocol_model_test DISCOVERY_MODE PRE_TEST)
+
+
 
