@@ -1,5 +1,7 @@
 #include "netscope/protocol/packet_parser.h"
 
+#include "netscope/protocol/checksum.h"
+
 #include <arpa/inet.h>
 
 #include <algorithm>
@@ -469,9 +471,18 @@ protocol_node parse_ipv4(const byte_view frame, const std::size_t offset) {
         std::to_string(frame.at(offset + 8U)), offset + 8U, 1U));
     node.fields.push_back(field(
         "protocol", std::to_string(protocol), ip_protocol_name(protocol), offset + 9U, 1U));
-    node.fields.push_back(field(
+    auto checksum_field = field(
         "header_checksum", hex_value(checksum, 4), hex_value(checksum, 4),
-        offset + 10U, 2U));
+        offset + 10U, 2U);
+    checksum_field.validation = has_valid_internet_checksum(
+        frame.subview(offset, header_length))
+        ? validation_status::valid
+        : validation_status::warning;
+    if (checksum_field.validation == validation_status::warning) {
+        checksum_field.warnings.push_back(
+            "checksum mismatch; capture offload may be responsible");
+    }
+    node.fields.push_back(std::move(checksum_field));
     node.fields.push_back(field(
         "source_address", ipv4_address(frame.subview(offset + 12U, 4U)),
         ipv4_address(frame.subview(offset + 12U, 4U)), offset + 12U, 4U));
