@@ -272,6 +272,25 @@ TEST(main_window_test, loads_and_saves_pcap_sessions) {
     EXPECT_EQ(roundtrip.packets.front().bytes, sample_bytes());
 }
 
+TEST(main_window_test, applies_display_filters_without_deleting_packets) {
+    netscope::ui::main_window window;
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const filter = window.findChild<QLineEdit*>(QStringLiteral("displayFilterEdit"));
+    ASSERT_NE(filter, nullptr);
+    window.append_packet(make_record());
+
+    filter->setText(QStringLiteral("udp"));
+    QMetaObject::invokeMethod(filter, "returnPressed");
+    QApplication::processEvents();
+    EXPECT_TRUE(table->isRowHidden(0));
+    EXPECT_EQ(table->model()->rowCount(), 1);
+
+    filter->setText(QStringLiteral("tcp.dstport == 80"));
+    QMetaObject::invokeMethod(filter, "returnPressed");
+    QApplication::processEvents();
+    EXPECT_FALSE(table->isRowHidden(0));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
