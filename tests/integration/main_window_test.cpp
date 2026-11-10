@@ -3,10 +3,14 @@
 #include "netscope/packet/packet_repository.h"
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDockWidget>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QPushButton>
+#include <QSpinBox>
 #include <QTableView>
 #include <QTreeWidget>
 
@@ -137,6 +141,42 @@ TEST(main_window_test, synchronizes_protocol_fields_and_hex_byte_selection) {
 
     ASSERT_NE(protocol_tree->currentItem(), nullptr);
     EXPECT_EQ(protocol_tree->currentItem()->text(0), QStringLiteral("source_address"));
+}
+
+TEST(main_window_test, searches_jumps_and_interprets_packet_bytes) {
+    netscope::ui::main_window window;
+    auto* const packet_table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const hex_view = window.findChild<QPlainTextEdit*>(QStringLiteral("hexView"));
+    auto* const search = window.findChild<QLineEdit*>(QStringLiteral("hexSearchEdit"));
+    auto* const find_next = window.findChild<QPushButton*>(QStringLiteral("hexFindNextButton"));
+    auto* const offset = window.findChild<QSpinBox*>(QStringLiteral("hexOffsetSpin"));
+    auto* const go_to = window.findChild<QPushButton*>(QStringLiteral("hexGoButton"));
+    auto* const width = window.findChild<QComboBox*>(QStringLiteral("integerWidthCombo"));
+    auto* const endian = window.findChild<QComboBox*>(QStringLiteral("integerEndianCombo"));
+    auto* const value = window.findChild<QLabel*>(QStringLiteral("integerValueLabel"));
+
+    ASSERT_NE(search, nullptr);
+    ASSERT_NE(find_next, nullptr);
+    ASSERT_NE(offset, nullptr);
+    ASSERT_NE(go_to, nullptr);
+    ASSERT_NE(width, nullptr);
+    ASSERT_NE(endian, nullptr);
+    ASSERT_NE(value, nullptr);
+
+    window.append_packet(make_record());
+    packet_table->selectRow(0);
+    search->setText(QStringLiteral("c0 a8 01 0a"));
+    find_next->click();
+    QApplication::processEvents();
+    EXPECT_EQ(hex_view->textCursor().selectedText(), QStringLiteral("c0 a8 01 0a"));
+
+    offset->setValue(26);
+    width->setCurrentText(QStringLiteral("4"));
+    endian->setCurrentText(QStringLiteral("Big endian"));
+    go_to->click();
+    QApplication::processEvents();
+    EXPECT_TRUE(value->text().contains(QStringLiteral("3232235786")));
+    EXPECT_TRUE(value->text().contains(QStringLiteral("0xc0a8010a")));
 }
 
 }  // namespace
