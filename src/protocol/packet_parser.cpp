@@ -2,12 +2,14 @@
 
 #include <arpa/inet.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace netscope::protocol {
 namespace {
@@ -108,6 +110,247 @@ std::uint16_t read_u16_be(const byte_view bytes, const std::size_t offset) {
 std::uint32_t read_u32_be(const byte_view bytes, const std::size_t offset) {
     byte_reader reader{bytes.subview(offset, 4U)};
     return reader.read_u32_be();
+}
+
+std::string port_name(const std::uint16_t port) {
+    switch (port) {
+    case 53U:
+        return "53 (DNS)";
+    case 67U:
+        return "67 (DHCP server)";
+    case 68U:
+        return "68 (DHCP client)";
+    case 80U:
+        return "80 (HTTP)";
+    case 443U:
+        return "443 (HTTPS)";
+    case 5353U:
+        return "5353 (mDNS)";
+    default:
+        return std::to_string(port);
+    }
+}
+
+std::string tcp_flags_text(const std::uint16_t flags) {
+    struct flag_name {
+        std::uint16_t mask;
+        const char* name;
+    };
+    constexpr std::array<flag_name, 9> names{{
+        {0x100U, "NS"}, {0x080U, "CWR"}, {0x040U, "ECE"},
+        {0x020U, "URG"}, {0x010U, "ACK"}, {0x008U, "PSH"},
+        {0x004U, "RST"}, {0x002U, "SYN"}, {0x001U, "FIN"},
+    }};
+
+    std::string result;
+    for (const auto& item : names) {
+        if ((flags & item.mask) == 0U) {
+            continue;
+        }
+        if (!result.empty()) {
+            result += ", ";
+        }
+        result += item.name;
+    }
+    return result.empty() ? "none" : result;
+}
+
+protocol_node parse_tcp(
+    const byte_view frame,
+    const std::size_t offset,
+    const std::size_t payload_length) {
+    const auto available = std::min(frame.size() - offset, payload_length);
+    protocol_node node{"Transmission Control Protocol", byte_range{offset, available}, {}, {}, {}};
+    if (available < 20U) {
+        node.warnings.push_back("truncated TCP header");
+        return node;
+    }
+
+    const auto source_port = read_u16_be(frame, offset);
+    const auto destination_port = read_u16_be(frame, offset + 2U);
+    const auto sequence_number = read_u32_be(frame, offset + 4U);
+    const auto acknowledgement_number = read_u32_be(frame, offset + 8U);
+    const auto data_offset_words = static_cast<std::uint8_t>(frame.at(offset + 12U) >> 4U);
+    const auto header_length = static_cast<std::size_t>(data_offset_words) * 4U;
+    const auto flags = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(frame.at(offset + 12U) & 0x01U) << 8U) |
+        static_cast<std::uint16_t>(frame.at(offset + 13U)));
+
+    node.fields.push_back(field(
+        "source_port", std::to_string(source_port), port_name(source_port), offset, 2U));
+    node.fields.push_back(field(
+        "destination_port", std::to_string(destination_port), port_name(destination_port),
+        offset + 2U, 2U));
+    node.fields.push_back(field(
+        "sequence_number", std::to_string(sequence_number), std::to_string(sequence_number),
+        offset + 4U, 4U));
+    node.fields.push_back(field(
+        "acknowledgement_number", std::to_string(acknowledgement_number),
+        std::to_string(acknowledgement_number), offset + 8U, 4U));
+    node.fields.push_back(field(
+        "header_length", std::to_string(data_offset_words),
+        std::to_string(header_length) + " bytes", offset + 12U, 1U));
+    node.fields.push_back(field(
+        "flags", hex_value(flags, 3), tcp_flags_text(flags), offset + 12U, 2U));
+    node.fields.push_back(field(
+        "window_size", std::to_string(read_u16_be(frame, offset + 14U)),
+        std::to_string(read_u16_be(frame, offset + 14U)), offset + 14U, 2U));
+    node.fields.push_back(field(
+        "checksum", hex_value(read_u16_be(frame, offset + 16U), 4),
+        hex_value(read_u16_be(frame, offset + 16U), 4), offset + 16U, 2U));
+    node.fields.push_back(field(
+        "urgent_pointer", std::to_string(read_u16_be(frame, offset + 18U)),
+        std::to_string(read_u16_be(frame, offset + 18U)), offset + 18U, 2U));
+
+    if (header_length < 20U || header_length > available) {
+        node.warnings.push_back("invalid or truncated TCP header length");
+        return node;
+    }
+    if (header_length > 20U) {
+        node.fields.push_back(field(
+            "options", "", std::to_string(header_length - 20U) + " bytes",
+            offset + 20U, header_length - 20U));
+    }
+    if (available > header_length) {
+        node.fields.push_back(field(
+            "payload", "", std::to_string(available - header_length) + " bytes",
+            offset + header_length, available - header_length));
+    }
+    return node;
+}
+
+protocol_node parse_udp(
+    const byte_view frame,
+    const std::size_t offset,
+    const std::size_t payload_length) {
+    const auto available = std::min(frame.size() - offset, payload_length);
+    protocol_node node{"User Datagram Protocol", byte_range{offset, available}, {}, {}, {}};
+    if (available < 8U) {
+        node.warnings.push_back("truncated UDP header");
+        return node;
+    }
+
+    const auto source_port = read_u16_be(frame, offset);
+    const auto destination_port = read_u16_be(frame, offset + 2U);
+    const auto length = read_u16_be(frame, offset + 4U);
+    const auto checksum = read_u16_be(frame, offset + 6U);
+    node.fields.push_back(field(
+        "source_port", std::to_string(source_port), port_name(source_port), offset, 2U));
+    node.fields.push_back(field(
+        "destination_port", std::to_string(destination_port), port_name(destination_port),
+        offset + 2U, 2U));
+    node.fields.push_back(field(
+        "length", std::to_string(length), std::to_string(length) + " bytes",
+        offset + 4U, 2U));
+    node.fields.push_back(field(
+        "checksum", hex_value(checksum, 4), hex_value(checksum, 4), offset + 6U, 2U));
+    if (length < 8U) {
+        node.warnings.push_back("invalid UDP length");
+    } else if (static_cast<std::size_t>(length) > available) {
+        node.warnings.push_back("truncated UDP payload");
+    } else if (length > 8U) {
+        node.fields.push_back(field(
+            "payload", "", std::to_string(length - 8U) + " bytes",
+            offset + 8U, static_cast<std::size_t>(length - 8U)));
+    }
+    return node;
+}
+
+std::string icmp_type_name(const std::uint8_t type, const bool ipv6) {
+    if (!ipv6) {
+        switch (type) {
+        case 0U:
+            return "Echo reply (0)";
+        case 3U:
+            return "Destination unreachable (3)";
+        case 8U:
+            return "Echo request (8)";
+        case 11U:
+            return "Time exceeded (11)";
+        default:
+            return "ICMP type " + std::to_string(type);
+        }
+    }
+    switch (type) {
+    case 1U:
+        return "Destination unreachable (1)";
+    case 128U:
+        return "Echo request (128)";
+    case 129U:
+        return "Echo reply (129)";
+    case 135U:
+        return "Neighbor solicitation (135)";
+    case 136U:
+        return "Neighbor advertisement (136)";
+    default:
+        return "ICMPv6 type " + std::to_string(type);
+    }
+}
+
+protocol_node parse_icmp(
+    const byte_view frame,
+    const std::size_t offset,
+    const std::size_t payload_length,
+    const bool ipv6) {
+    const auto available = std::min(frame.size() - offset, payload_length);
+    protocol_node node{
+        ipv6 ? "Internet Control Message Protocol v6" : "Internet Control Message Protocol",
+        byte_range{offset, available}, {}, {}, {}};
+    if (available < 4U) {
+        node.warnings.push_back(ipv6 ? "truncated ICMPv6 header" : "truncated ICMP header");
+        return node;
+    }
+
+    const auto type = frame.at(offset);
+    const auto code = frame.at(offset + 1U);
+    node.fields.push_back(field(
+        "type", std::to_string(type), icmp_type_name(type, ipv6), offset, 1U));
+    node.fields.push_back(field(
+        "code", std::to_string(code), std::to_string(code), offset + 1U, 1U));
+    node.fields.push_back(field(
+        "checksum", hex_value(read_u16_be(frame, offset + 2U), 4),
+        hex_value(read_u16_be(frame, offset + 2U), 4), offset + 2U, 2U));
+    if (available >= 8U && ((!ipv6 && (type == 0U || type == 8U)) ||
+                           (ipv6 && (type == 128U || type == 129U)))) {
+        node.fields.push_back(field(
+            "identifier", std::to_string(read_u16_be(frame, offset + 4U)),
+            std::to_string(read_u16_be(frame, offset + 4U)), offset + 4U, 2U));
+        node.fields.push_back(field(
+            "sequence_number", std::to_string(read_u16_be(frame, offset + 6U)),
+            std::to_string(read_u16_be(frame, offset + 6U)), offset + 6U, 2U));
+    }
+    return node;
+}
+
+void add_transport_child(
+    protocol_node& network_node,
+    const byte_view frame,
+    const std::uint8_t protocol,
+    const std::size_t payload_offset,
+    const std::size_t payload_length,
+    const bool ipv6) {
+    switch (protocol) {
+    case 1U:
+        if (!ipv6) {
+            network_node.children.push_back(
+                parse_icmp(frame, payload_offset, payload_length, false));
+        }
+        break;
+    case 6U:
+        network_node.children.push_back(parse_tcp(frame, payload_offset, payload_length));
+        break;
+    case 17U:
+        network_node.children.push_back(parse_udp(frame, payload_offset, payload_length));
+        break;
+    case 58U:
+        if (ipv6) {
+            network_node.children.push_back(
+                parse_icmp(frame, payload_offset, payload_length, true));
+        }
+        break;
+    default:
+        break;
+    }
 }
 
 protocol_node parse_arp(const byte_view frame, const std::size_t offset) {
@@ -243,6 +486,17 @@ protocol_node parse_ipv4(const byte_view frame, const std::size_t offset) {
     if (static_cast<std::size_t>(total_length) > available) {
         node.warnings.push_back("truncated IPv4 payload");
     }
+    const auto bounded_total_length = std::min(
+        static_cast<std::size_t>(total_length), available);
+    if ((flags_fragment & 0x1fffU) == 0U && bounded_total_length >= header_length) {
+        add_transport_child(
+            node,
+            frame,
+            protocol,
+            offset + header_length,
+            bounded_total_length - header_length,
+            false);
+    }
     return node;
 }
 
@@ -291,6 +545,13 @@ protocol_node parse_ipv6(const byte_view frame, const std::size_t offset) {
     if (static_cast<std::size_t>(payload_length) > available - 40U) {
         node.warnings.push_back("truncated IPv6 payload");
     }
+    add_transport_child(
+        node,
+        frame,
+        next_header,
+        offset + 40U,
+        std::min(static_cast<std::size_t>(payload_length), available - 40U),
+        true);
     return node;
 }
 
