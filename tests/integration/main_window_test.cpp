@@ -14,6 +14,7 @@ TEST(main_window_test, provides_a_ready_application_shell) {
 }
 
 int main(int argc, char** argv) {
+    qputenv("QT_QPA_PLATFORM", QByteArrayLiteral("offscreen"));
     QApplication application{argc, argv};
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
