@@ -173,6 +173,18 @@ target_link_libraries(netscope_display_filter_test PRIVATE
 
 gtest_discover_tests(netscope_display_filter_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_application_parser_test
+    unit/application_parser_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_application_parser_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_application_parser_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
