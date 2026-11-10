@@ -137,6 +137,18 @@ target_link_libraries(netscope_packet_repository_test PRIVATE
 
 gtest_discover_tests(netscope_packet_repository_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_byte_inspector_test
+    unit/byte_inspector_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_byte_inspector_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_byte_inspector_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
