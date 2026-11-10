@@ -57,6 +57,7 @@ endif()
 add_library(netscope_core STATIC
     src/build_info.cpp
     src/packet/byte_reader.cpp
+    src/protocol/packet_parser.cpp
     src/protocol/protocol_model.cpp
 )
 
