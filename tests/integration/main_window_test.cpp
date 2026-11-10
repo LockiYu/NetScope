@@ -1,7 +1,9 @@
 #include "netscope/ui/main_window.h"
 
+#include "netscope/capture/capture_runner.h"
 #include "netscope/packet/packet_repository.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QDockWidget>
@@ -18,6 +20,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
+#include <thread>
 
 namespace {
 
@@ -43,14 +47,18 @@ QTreeWidgetItem* find_item(QTreeWidget* const tree, const QString& name) {
     return nullptr;
 }
 
-std::shared_ptr<const netscope::packet::packet_record> make_record() {
-    std::vector<std::uint8_t> bytes{
+std::vector<std::uint8_t> sample_bytes() {
+    return {
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
         0x45, 0, 0, 0x28, 0, 1, 0x40, 0, 64, 6, 0, 0,
         192, 168, 1, 10, 8, 8, 8, 8,
         0x04, 0xd2, 0, 80, 0, 0, 0, 1, 0, 0, 0, 0,
         0x50, 0x02, 0x40, 0, 0, 0, 0, 0,
     };
+}
+
+std::shared_ptr<const netscope::packet::packet_record> make_record() {
+    auto bytes = sample_bytes();
     netscope::packet::packet_repository repository{1};
     return repository.append(netscope::capture::merged_packet{
         netscope::capture::captured_packet{
@@ -62,6 +70,29 @@ std::shared_ptr<const netscope::packet::packet_record> make_record() {
         {"en0"},
     });
 }
+
+class ui_packet_backend final : public netscope::capture::capture_backend {
+public:
+    std::optional<netscope::capture::captured_packet> next_packet() override {
+        if (delivered_) {
+            return std::nullopt;
+        }
+        delivered_ = true;
+        auto bytes = sample_bytes();
+        return netscope::capture::captured_packet{
+            std::chrono::system_clock::now(),
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(bytes.size()),
+            std::move(bytes),
+        };
+    }
+
+    void break_capture() noexcept override {}
+    netscope::capture::capture_statistics statistics() const override { return {}; }
+
+private:
+    bool delivered_{false};
+};
 
 TEST(main_window_test, provides_a_ready_application_shell) {
     netscope::ui::main_window window;
@@ -177,6 +208,38 @@ TEST(main_window_test, searches_jumps_and_interprets_packet_bytes) {
     QApplication::processEvents();
     EXPECT_TRUE(value->text().contains(QStringLiteral("3232235786")));
     EXPECT_TRUE(value->text().contains(QStringLiteral("0xc0a8010a")));
+}
+
+TEST(main_window_test, connects_capture_actions_to_the_multi_interface_runner) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        }};
+    auto* const interfaces = window.findChild<QListWidget*>(QStringLiteral("interfaceList"));
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const start = window.findChild<QAction*>(QStringLiteral("startCaptureAction"));
+    auto* const stop = window.findChild<QAction*>(QStringLiteral("stopCaptureAction"));
+
+    ASSERT_NE(interfaces, nullptr);
+    ASSERT_GT(interfaces->count(), 0);
+    for (int index = 0; index < interfaces->count(); ++index) {
+        interfaces->item(index)->setCheckState(index == 0 ? Qt::Checked : Qt::Unchecked);
+    }
+
+    start->trigger();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+    while (table->model()->rowCount() == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        QApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    }
+    stop->trigger();
+    QApplication::processEvents();
+
+    EXPECT_EQ(table->model()->rowCount(), 1);
+    EXPECT_TRUE(start->isEnabled());
+    EXPECT_FALSE(stop->isEnabled());
 }
 
 }  // namespace
