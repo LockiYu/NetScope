@@ -77,6 +77,19 @@ target_link_libraries(netscope_network_parser_test PRIVATE
 
 gtest_discover_tests(netscope_network_parser_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_checksum_test
+    unit/checksum_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_checksum_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_checksum_test DISCOVERY_MODE PRE_TEST)
+
+
 
 
 
