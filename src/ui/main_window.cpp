@@ -11,12 +11,14 @@
 #include <QColor>
 #include <QDateTime>
 #include <QFontDatabase>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenuBar>
 #include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -204,6 +206,14 @@ main_window::main_window(
     : QMainWindow{parent}, capture_runner_{std::move(opener)} {
     setWindowTitle(QStringLiteral("NetScope"));
     setMinimumSize(960, 640);
+
+    auto* const file_menu = menuBar()->addMenu(QStringLiteral("File"));
+    auto* const open_action = file_menu->addAction(QStringLiteral("Open PCAP…"));
+    open_action->setObjectName(QStringLiteral("openPcapAction"));
+    open_action->setShortcut(QKeySequence::Open);
+    auto* const save_action = file_menu->addAction(QStringLiteral("Save PCAP As…"));
+    save_action->setObjectName(QStringLiteral("savePcapAction"));
+    save_action->setShortcut(QKeySequence::SaveAs);
 
     auto* const toolbar = addToolBar(QStringLiteral("Capture"));
     toolbar->setObjectName(QStringLiteral("captureToolBar"));
@@ -580,6 +590,37 @@ main_window::main_window(
         filter_edit->setEnabled(true);
         snap_length->setEnabled(true);
     });
+    connect(open_action, &QAction::triggered, this, [this] {
+        const auto path = QFileDialog::getOpenFileName(
+            this,
+            QStringLiteral("Open packet capture"),
+            {},
+            QStringLiteral("PCAP files (*.pcap *.cap);;All files (*)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            load_pcap(std::filesystem::path{path.toStdString()});
+        } catch (const std::exception& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+        }
+    });
+    connect(save_action, &QAction::triggered, this, [this] {
+        const auto path = QFileDialog::getSaveFileName(
+            this,
+            QStringLiteral("Save packet capture"),
+            QStringLiteral("capture.pcap"),
+            QStringLiteral("PCAP files (*.pcap);;All files (*)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            save_pcap(std::filesystem::path{path.toStdString()});
+            statusBar()->showMessage(QStringLiteral("PCAP saved"), 4000);
+        } catch (const std::exception& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+        }
+    });
 }
 
 main_window::~main_window() {
@@ -617,6 +658,50 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         item->setData(static_cast<qulonglong>(stored_index), Qt::UserRole);
     }
     packet_model_->appendRow(row);
+}
+
+void main_window::load_pcap(const std::filesystem::path& path) {
+    if (capture_runner_.running()) {
+        stop_capture();
+    }
+    auto contents = capture::read_pcap_file(path);
+    if (contents.link_type != 1) {
+        throw capture::pcap_error{
+            "unsupported PCAP link type " + std::to_string(contents.link_type) +
+            "; NetScope currently requires Ethernet"};
+    }
+
+    repository_.clear();
+    packet_model_->removeRows(0, packet_model_->rowCount());
+    packets_.clear();
+    protocol_tree_->clear();
+    hex_view_->clear();
+    byte_hex_positions_.clear();
+    displayed_packet_index_.reset();
+    current_byte_offset_.reset();
+    current_snapshot_length_ = contents.snapshot_length;
+
+    for (auto& packet : contents.packets) {
+        append_packet(repository_.append(capture::merged_packet{
+            std::move(packet),
+            {"pcap"},
+        }));
+    }
+    setWindowTitle(
+        QStringLiteral("NetScope — %1").arg(QString::fromStdString(path.filename().string())));
+    statusBar()->showMessage(
+        QStringLiteral("Loaded %1 packet(s)")
+            .arg(static_cast<qulonglong>(packets_.size())),
+        4000);
+}
+
+void main_window::save_pcap(const std::filesystem::path& path) const {
+    std::vector<capture::captured_packet> packets;
+    packets.reserve(packets_.size());
+    for (const auto& record : packets_) {
+        packets.push_back(record->capture.packet);
+    }
+    capture::write_pcap_file(path, 1, current_snapshot_length_, packets);
 }
 
 void main_window::show_packet(const std::size_t index) {
