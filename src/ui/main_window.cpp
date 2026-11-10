@@ -1,6 +1,7 @@
 #include "netscope/ui/main_window.h"
 
 #include "netscope/capture/live_capture.h"
+#include "netscope/packet/byte_inspector.h"
 #include "netscope/packet/packet_repository.h"
 
 #include <QAction>
@@ -12,12 +13,15 @@
 #include <QFontDatabase>
 #include <QFormLayout>
 #include <QHeaderView>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSplitter>
+#include <QSpinBox>
 #include <QStandardItemModel>
 #include <QItemSelectionModel>
 #include <QStringList>
@@ -254,13 +258,58 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
     protocol_tree_->setAlternatingRowColors(true);
     protocol_tree_->header()->setStretchLastSection(true);
 
-    hex_view_ = new QPlainTextEdit{details};
+    auto* const hex_panel = new QWidget{details};
+    auto* const hex_layout = new QVBoxLayout{hex_panel};
+    hex_layout->setContentsMargins(0, 0, 0, 0);
+    auto* const search_layout = new QHBoxLayout{};
+    auto* const search_mode = new QComboBox{hex_panel};
+    search_mode->setObjectName(QStringLiteral("hexSearchModeCombo"));
+    search_mode->addItems({QStringLiteral("Hex"), QStringLiteral("Text")});
+    auto* const search_edit = new QLineEdit{hex_panel};
+    search_edit->setObjectName(QStringLiteral("hexSearchEdit"));
+    search_edit->setPlaceholderText(QStringLiteral("Hex bytes or text"));
+    auto* const find_next = new QPushButton{QStringLiteral("Find next"), hex_panel};
+    find_next->setObjectName(QStringLiteral("hexFindNextButton"));
+    search_layout->addWidget(search_mode);
+    search_layout->addWidget(search_edit, 1);
+    search_layout->addWidget(find_next);
+    hex_layout->addLayout(search_layout);
+
+    auto* const inspect_layout = new QHBoxLayout{};
+    inspect_layout->addWidget(new QLabel{QStringLiteral("Offset"), hex_panel});
+    offset_spin_ = new QSpinBox{hex_panel};
+    offset_spin_->setObjectName(QStringLiteral("hexOffsetSpin"));
+    offset_spin_->setRange(0, 0);
+    auto* const go_to = new QPushButton{QStringLiteral("Go"), hex_panel};
+    go_to->setObjectName(QStringLiteral("hexGoButton"));
+    integer_width_ = new QComboBox{hex_panel};
+    integer_width_->setObjectName(QStringLiteral("integerWidthCombo"));
+    integer_width_->addItems({QStringLiteral("1"), QStringLiteral("2"),
+                              QStringLiteral("4"), QStringLiteral("8")});
+    integer_endian_ = new QComboBox{hex_panel};
+    integer_endian_->setObjectName(QStringLiteral("integerEndianCombo"));
+    integer_endian_->addItems(
+        {QStringLiteral("Big endian"), QStringLiteral("Little endian")});
+    integer_value_ = new QLabel{QStringLiteral("No byte selected"), hex_panel};
+    integer_value_->setObjectName(QStringLiteral("integerValueLabel"));
+    integer_value_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    inspect_layout->addWidget(offset_spin_);
+    inspect_layout->addWidget(go_to);
+    inspect_layout->addSpacing(8);
+    inspect_layout->addWidget(new QLabel{QStringLiteral("Integer"), hex_panel});
+    inspect_layout->addWidget(integer_width_);
+    inspect_layout->addWidget(integer_endian_);
+    inspect_layout->addWidget(integer_value_, 1);
+    hex_layout->addLayout(inspect_layout);
+
+    hex_view_ = new QPlainTextEdit{hex_panel};
     hex_view_->setObjectName(QStringLiteral("hexView"));
     hex_view_->setReadOnly(true);
     hex_view_->setLineWrapMode(QPlainTextEdit::NoWrap);
     hex_view_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     hex_view_->setPlaceholderText(QStringLiteral(
         "Select a packet to inspect its hexadecimal and ASCII representation."));
+    hex_layout->addWidget(hex_view_, 1);
     details->setSizes({420, 540});
     workspace->setSizes({360, 280});
     setCentralWidget(workspace);
@@ -349,14 +398,7 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
                 length > byte_hex_positions_.size() - offset) {
                 return;
             }
-            const QSignalBlocker blocker{hex_view_};
-            QTextCursor cursor{hex_view_->document()};
-            cursor.setPosition(byte_hex_positions_[offset]);
-            cursor.setPosition(
-                byte_hex_positions_[offset + length - 1U] + 2,
-                QTextCursor::KeepAnchor);
-            hex_view_->setTextCursor(cursor);
-            hex_view_->ensureCursorVisible();
+            select_byte_range(offset, length, false);
         });
 
     connect(
@@ -367,11 +409,18 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
             if (!displayed_packet_index_.has_value()) {
                 return;
             }
-            const auto byte_offset = byte_at_text_position(
-                byte_hex_positions_, hex_view_->textCursor().position());
+            const auto cursor = hex_view_->textCursor();
+            const auto text_position = cursor.hasSelection()
+                ? cursor.selectionStart()
+                : cursor.position();
+            const auto byte_offset =
+                byte_at_text_position(byte_hex_positions_, text_position);
             if (!byte_offset.has_value()) {
                 return;
             }
+            current_byte_offset_ = byte_offset;
+            offset_spin_->setValue(static_cast<int>(byte_offset.value()));
+            update_integer_value(byte_offset.value());
             const auto match = protocol::find_most_specific_range(
                 packets_[displayed_packet_index_.value()]->analysis,
                 byte_offset.value());
@@ -383,6 +432,70 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
                 const QSignalBlocker blocker{protocol_tree_};
                 protocol_tree_->setCurrentItem(item);
                 protocol_tree_->scrollToItem(item);
+            }
+        });
+
+    connect(find_next, &QPushButton::clicked, this, [this, search_mode, search_edit] {
+        if (!displayed_packet_index_.has_value() || search_edit->text().isEmpty()) {
+            return;
+        }
+        try {
+            std::vector<std::uint8_t> pattern;
+            if (search_mode->currentIndex() == 0) {
+                pattern = packet::parse_hex_pattern(search_edit->text().toStdString());
+            } else {
+                const auto text_bytes = search_edit->text().toUtf8();
+                pattern.assign(text_bytes.begin(), text_bytes.end());
+            }
+            const auto& bytes = packets_[displayed_packet_index_.value()]->capture.packet.bytes;
+            const auto matches = packet::find_bytes(bytes, pattern);
+            if (matches.empty()) {
+                statusBar()->showMessage(QStringLiteral("No matching bytes"), 3000);
+                return;
+            }
+            const auto next = current_byte_offset_.has_value()
+                ? std::upper_bound(
+                      matches.begin(), matches.end(), current_byte_offset_.value())
+                : matches.begin();
+            const auto match = next == matches.end() ? matches.front() : *next;
+            select_byte_range(match, pattern.size(), true);
+            statusBar()->showMessage(
+                QStringLiteral("Match at offset %1").arg(static_cast<qulonglong>(match)),
+                3000);
+        } catch (const std::invalid_argument& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 3000);
+        }
+    });
+    connect(search_edit, &QLineEdit::returnPressed, find_next, &QPushButton::click);
+
+    connect(go_to, &QPushButton::clicked, this, [this] {
+        if (!displayed_packet_index_.has_value()) {
+            return;
+        }
+        const auto offset = static_cast<std::size_t>(offset_spin_->value());
+        const auto requested = static_cast<std::size_t>(integer_width_->currentText().toUInt());
+        const auto& bytes = packets_[displayed_packet_index_.value()]->capture.packet.bytes;
+        const auto available = offset < bytes.size() ? bytes.size() - offset : 0U;
+        if (available != 0U) {
+            select_byte_range(offset, std::min(requested, available), true);
+        }
+    });
+    connect(
+        integer_width_,
+        &QComboBox::currentIndexChanged,
+        this,
+        [this] {
+            if (current_byte_offset_.has_value()) {
+                update_integer_value(current_byte_offset_.value());
+            }
+        });
+    connect(
+        integer_endian_,
+        &QComboBox::currentIndexChanged,
+        this,
+        [this] {
+            if (current_byte_offset_.has_value()) {
+                update_integer_value(current_byte_offset_.value());
             }
         });
 }
@@ -432,6 +545,64 @@ void main_window::show_packet(const std::size_t index) {
     auto formatted = format_hex(record.capture.packet.bytes);
     byte_hex_positions_ = std::move(formatted.byte_positions);
     hex_view_->setPlainText(formatted.text);
+    current_byte_offset_.reset();
+    offset_spin_->setRange(
+        0,
+        record.capture.packet.bytes.empty()
+            ? 0
+            : static_cast<int>(record.capture.packet.bytes.size() - 1U));
+    integer_value_->setText(QStringLiteral("No byte selected"));
+}
+
+void main_window::select_byte_range(
+    const std::size_t offset,
+    const std::size_t length,
+    const bool notify) {
+    if (length == 0U || offset >= byte_hex_positions_.size() ||
+        length > byte_hex_positions_.size() - offset) {
+        return;
+    }
+    std::optional<QSignalBlocker> blocker;
+    if (!notify) {
+        blocker.emplace(hex_view_);
+    }
+    QTextCursor cursor{hex_view_->document()};
+    cursor.setPosition(byte_hex_positions_[offset]);
+    cursor.setPosition(
+        byte_hex_positions_[offset + length - 1U] + 2,
+        QTextCursor::KeepAnchor);
+    hex_view_->setTextCursor(cursor);
+    hex_view_->ensureCursorVisible();
+    current_byte_offset_ = offset;
+    offset_spin_->setValue(static_cast<int>(offset));
+    update_integer_value(offset);
+}
+
+void main_window::update_integer_value(const std::size_t offset) {
+    if (!displayed_packet_index_.has_value()) {
+        return;
+    }
+    const auto width = static_cast<std::size_t>(integer_width_->currentText().toUInt());
+    const auto order = integer_endian_->currentIndex() == 0
+        ? packet::byte_order::big_endian
+        : packet::byte_order::little_endian;
+    try {
+        const auto value = packet::interpret_unsigned(
+            packets_[displayed_packet_index_.value()]->capture.packet.bytes,
+            offset,
+            width,
+            order);
+        integer_value_->setText(
+            QStringLiteral("%1 (0x%2)")
+                .arg(static_cast<qulonglong>(value))
+                .arg(
+                    static_cast<qulonglong>(value),
+                    static_cast<int>(width * 2U),
+                    16,
+                    QLatin1Char('0')));
+    } catch (const std::out_of_range&) {
+        integer_value_->setText(QStringLiteral("Not enough bytes"));
+    }
 }
 
 }  // namespace netscope::ui
