@@ -68,6 +68,35 @@ target_link_libraries(netscope_core PUBLIC
     Qt6::Core
 )
 
+add_library(netscope_ui STATIC
+    src/ui/main_window.cpp
+)
+
+target_include_directories(netscope_ui PUBLIC
+    "${PROJECT_SOURCE_DIR}/include"
+)
+
+target_link_libraries(netscope_ui PUBLIC
+    netscope_project_options
+    netscope_core
+    Qt6::Widgets
+    Qt6::Charts
+)
+
+qt_add_executable(netscope_app MACOSX_BUNDLE
+    app/main.cpp
+)
+
+target_link_libraries(netscope_app PRIVATE netscope_ui)
+
+set_target_properties(netscope_app PROPERTIES
+    OUTPUT_NAME "NetScope"
+    MACOSX_BUNDLE_BUNDLE_NAME "NetScope"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "edu.ucas.netscope"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+)
+
 if(NETSCOPE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

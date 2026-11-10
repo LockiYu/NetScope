@@ -26,8 +26,7 @@ target_include_directories(netscope_main_window_test PRIVATE
 )
 
 target_link_libraries(netscope_main_window_test PRIVATE
-    netscope_core
-    Qt6::Widgets
+    netscope_ui
     GTest::gtest
 )
 
