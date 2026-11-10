@@ -17,6 +17,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -30,6 +31,7 @@
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QTextCursor>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -39,6 +41,7 @@
 #include <cctype>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -192,7 +195,13 @@ std::optional<std::size_t> byte_at_text_position(
 
 namespace netscope::ui {
 
-main_window::main_window(QWidget* parent) : QMainWindow{parent} {
+main_window::main_window(QWidget* parent)
+    : main_window{capture::capture_runner::opener{capture::open_live_capture}, parent} {}
+
+main_window::main_window(
+    capture::capture_runner::opener opener,
+    QWidget* parent)
+    : QMainWindow{parent}, capture_runner_{std::move(opener)} {
     setWindowTitle(QStringLiteral("NetScope"));
     setMinimumSize(960, 640);
 
@@ -200,17 +209,17 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
     toolbar->setObjectName(QStringLiteral("captureToolBar"));
     toolbar->setMovable(false);
 
-    auto* const start_action = toolbar->addAction(QStringLiteral("Start"));
-    start_action->setObjectName(QStringLiteral("startCaptureAction"));
-    start_action->setToolTip(QStringLiteral("Start capture on selected interfaces"));
-    auto* const pause_action = toolbar->addAction(QStringLiteral("Pause"));
-    pause_action->setObjectName(QStringLiteral("pauseCaptureAction"));
-    pause_action->setToolTip(QStringLiteral("Pause packet collection"));
-    auto* const stop_action = toolbar->addAction(QStringLiteral("Stop"));
-    stop_action->setObjectName(QStringLiteral("stopCaptureAction"));
-    stop_action->setToolTip(QStringLiteral("Stop the current capture"));
-    pause_action->setEnabled(false);
-    stop_action->setEnabled(false);
+    start_action_ = toolbar->addAction(QStringLiteral("Start"));
+    start_action_->setObjectName(QStringLiteral("startCaptureAction"));
+    start_action_->setToolTip(QStringLiteral("Start capture on selected interfaces"));
+    pause_action_ = toolbar->addAction(QStringLiteral("Pause"));
+    pause_action_->setObjectName(QStringLiteral("pauseCaptureAction"));
+    pause_action_->setToolTip(QStringLiteral("Pause packet collection"));
+    stop_action_ = toolbar->addAction(QStringLiteral("Stop"));
+    stop_action_->setObjectName(QStringLiteral("stopCaptureAction"));
+    stop_action_->setToolTip(QStringLiteral("Stop the current capture"));
+    pause_action_->setEnabled(false);
+    stop_action_->setEnabled(false);
 
     toolbar->addSeparator();
     toolbar->addWidget(new QLabel{QStringLiteral("Capture filter:"), toolbar});
@@ -498,6 +507,83 @@ main_window::main_window(QWidget* parent) : QMainWindow{parent} {
                 update_integer_value(current_byte_offset_.value());
             }
         });
+
+    connect(start_action_, &QAction::triggered, this, [this, interface_list, filter_edit, snap_length] {
+        std::vector<std::string> interfaces;
+        for (int index = 0; index < interface_list->count(); ++index) {
+            const auto* const item = interface_list->item(index);
+            if (item->checkState() == Qt::Checked && item->flags().testFlag(Qt::ItemIsEnabled)) {
+                interfaces.push_back(item->text().toStdString());
+            }
+        }
+        if (interfaces.empty()) {
+            statusBar()->showMessage(QStringLiteral("Select at least one capture interface"), 4000);
+            return;
+        }
+
+        bool valid_snapshot{false};
+        const int snapshot_length = snap_length->currentText().toInt(&valid_snapshot);
+        if (!valid_snapshot) {
+            statusBar()->showMessage(QStringLiteral("Capture length must be an integer"), 4000);
+            return;
+        }
+        capture::capture_options options;
+        options.snapshot_length = snapshot_length;
+        options.bpf_filter = filter_edit->text().trimmed().toStdString();
+
+        try {
+            latest_capture_time_.reset();
+            packet_merger_ = capture::packet_merger{};
+            capture_runner_.start(
+                interfaces,
+                options,
+                [this](capture::interface_packet packet) {
+                    enqueue_captured_packet(std::move(packet));
+                },
+                [this](const std::string& message) {
+                    QMetaObject::invokeMethod(
+                        this,
+                        [this, message] {
+                            statusBar()->showMessage(
+                                QStringLiteral("Capture error: %1")
+                                    .arg(QString::fromStdString(message)),
+                                8000);
+                        },
+                        Qt::QueuedConnection);
+                });
+            start_action_->setEnabled(false);
+            pause_action_->setEnabled(true);
+            stop_action_->setEnabled(true);
+            interface_list->setEnabled(false);
+            filter_edit->setEnabled(false);
+            snap_length->setEnabled(false);
+            statusBar()->showMessage(
+                QStringLiteral("Capturing on %1 interface(s)").arg(interfaces.size()));
+        } catch (const std::exception& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+        }
+    });
+    connect(pause_action_, &QAction::triggered, this, [this] {
+        if (capture_runner_.paused()) {
+            capture_runner_.resume();
+            pause_action_->setText(QStringLiteral("Pause"));
+            statusBar()->showMessage(QStringLiteral("Capture resumed"));
+        } else {
+            capture_runner_.pause();
+            pause_action_->setText(QStringLiteral("Resume"));
+            statusBar()->showMessage(QStringLiteral("Capture paused"));
+        }
+    });
+    connect(stop_action_, &QAction::triggered, this, [this, interface_list, filter_edit, snap_length] {
+        stop_capture();
+        interface_list->setEnabled(true);
+        filter_edit->setEnabled(true);
+        snap_length->setEnabled(true);
+    });
+}
+
+main_window::~main_window() {
+    capture_runner_.stop();
 }
 
 void main_window::append_packet(std::shared_ptr<const packet::packet_record> packet) {
@@ -603,6 +689,69 @@ void main_window::update_integer_value(const std::size_t offset) {
     } catch (const std::out_of_range&) {
         integer_value_->setText(QStringLiteral("Not enough bytes"));
     }
+}
+
+void main_window::enqueue_captured_packet(capture::interface_packet packet) {
+    bool schedule{false};
+    {
+        const std::lock_guard lock{captured_mutex_};
+        captured_pending_.push_back(std::move(packet));
+        if (!drain_scheduled_.exchange(true)) {
+            schedule = true;
+        }
+    }
+    if (schedule) {
+        QMetaObject::invokeMethod(
+            this,
+            [this] { drain_captured_packets(false); },
+            Qt::QueuedConnection);
+    }
+}
+
+void main_window::drain_captured_packets(const bool flush_all) {
+    std::vector<capture::interface_packet> pending;
+    {
+        const std::lock_guard lock{captured_mutex_};
+        pending.swap(captured_pending_);
+        drain_scheduled_.store(false);
+    }
+    for (auto& packet : pending) {
+        if (!latest_capture_time_.has_value() ||
+            packet.packet.timestamp > latest_capture_time_.value()) {
+            latest_capture_time_ = packet.packet.timestamp;
+        }
+        packet_merger_.push(std::move(packet));
+    }
+
+    std::vector<capture::merged_packet> ready;
+    if (flush_all) {
+        ready = packet_merger_.flush_all();
+    } else if (latest_capture_time_.has_value()) {
+        ready = packet_merger_.drain_ready(latest_capture_time_.value());
+    }
+    for (auto& packet : ready) {
+        append_packet(repository_.append(std::move(packet)));
+    }
+    if (!flush_all && packet_merger_.pending_count() != 0U &&
+        !merge_flush_scheduled_) {
+        merge_flush_scheduled_ = true;
+        QTimer::singleShot(std::chrono::milliseconds{5}, this, [this] {
+            merge_flush_scheduled_ = false;
+            drain_captured_packets(true);
+        });
+    }
+}
+
+void main_window::stop_capture() {
+    capture_runner_.stop();
+    drain_captured_packets(true);
+    start_action_->setEnabled(true);
+    pause_action_->setEnabled(false);
+    pause_action_->setText(QStringLiteral("Pause"));
+    stop_action_->setEnabled(false);
+    statusBar()->showMessage(
+        QStringLiteral("Capture stopped — %1 packet(s)")
+            .arg(static_cast<qulonglong>(repository_.size())));
 }
 
 }  // namespace netscope::ui
