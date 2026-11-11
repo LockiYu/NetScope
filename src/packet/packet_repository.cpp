@@ -58,8 +58,31 @@ void summarize(packet_record& record) {
     const auto* icmp = find_node(record.analysis, "Internet Control Message Protocol");
     const auto* icmpv6 = find_node(record.analysis, "Internet Control Message Protocol v6");
     const auto* arp = find_node(record.analysis, "Address Resolution Protocol");
+    const auto* dns = find_node(record.analysis, "Domain Name System");
+    const auto* dhcp = find_node(record.analysis, "Dynamic Host Configuration Protocol");
+    const auto* http = find_node(record.analysis, "Hypertext Transfer Protocol");
+    const auto* tls = find_node(record.analysis, "Transport Layer Security");
 
-    if (tcp != nullptr) {
+    if (dns != nullptr) {
+        record.protocol = "DNS";
+        record.information = field_value(dns, "query_name");
+        if (record.information.empty()) {
+            record.information = field_value(dns, "flags");
+        }
+    } else if (dhcp != nullptr) {
+        record.protocol = "DHCP";
+        record.information = field_value(dhcp, "message_type");
+    } else if (http != nullptr) {
+        record.protocol = "HTTP";
+        record.information = field_value(http, "start_line");
+    } else if (tls != nullptr) {
+        record.protocol = "TLS";
+        record.information = field_value(tls, "handshake_type");
+        const auto server_name = field_value(tls, "server_name");
+        if (!server_name.empty()) {
+            record.information += " SNI=" + server_name;
+        }
+    } else if (tcp != nullptr) {
         record.protocol = "TCP";
         record.information = field_value(tcp, "source_port") + " → " +
                              field_value(tcp, "destination_port") + " [" +

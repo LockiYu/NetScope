@@ -60,6 +60,15 @@ QColor protocol_color(const std::string& protocol) {
     if (protocol == "ARP") {
         return QColor{251, 232, 210};
     }
+    if (protocol == "DNS") {
+        return QColor{250, 243, 196};
+    }
+    if (protocol == "HTTP" || protocol == "DHCP") {
+        return QColor{220, 241, 221};
+    }
+    if (protocol == "TLS") {
+        return QColor{218, 229, 238};
+    }
     return QColor{239, 241, 243};
 }
 

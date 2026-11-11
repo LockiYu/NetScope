@@ -1,5 +1,6 @@
 #include "netscope/protocol/packet_parser.h"
 
+#include "netscope/protocol/application_parser.h"
 #include "netscope/protocol/checksum.h"
 
 #include <arpa/inet.h>
@@ -248,6 +249,15 @@ protocol_node parse_tcp(
         node.fields.push_back(field(
             "payload", "", std::to_string(available - header_length) + " bytes",
             offset + header_length, available - header_length));
+        if (auto application = parse_tcp_application(
+                frame,
+                offset + header_length,
+                available - header_length,
+                source_port,
+                destination_port);
+            application.has_value()) {
+            node.children.push_back(std::move(application.value()));
+        }
     }
     return node;
 }
@@ -285,6 +295,15 @@ protocol_node parse_udp(
         node.fields.push_back(field(
             "payload", "", std::to_string(length - 8U) + " bytes",
             offset + 8U, static_cast<std::size_t>(length - 8U)));
+        if (auto application = parse_udp_application(
+                frame,
+                offset + 8U,
+                static_cast<std::size_t>(length - 8U),
+                source_port,
+                destination_port);
+            application.has_value()) {
+            node.children.push_back(std::move(application.value()));
+        }
     }
     return node;
 }
