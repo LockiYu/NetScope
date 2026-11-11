@@ -6,18 +6,29 @@
 
 namespace {
 
+netscope::protocol::protocol_field field(
+    std::string name,
+    std::string value,
+    const std::size_t offset,
+    const std::size_t length) {
+    return netscope::protocol::protocol_field{
+        std::move(name), value, std::move(value), {offset, length},
+        std::nullopt, std::nullopt,
+        netscope::protocol::validation_status::not_checked, {}};
+}
+
 TEST(packet_compare_test, reports_changed_and_missing_protocol_fields_by_path) {
     const netscope::protocol::protocol_node left{
         "Frame", {0U, 10U}, {},
         {{"IPv4", {0U, 10U},
-          {{"ttl", "64", "64", {1U, 1U}},
-           {"source", "10.0.0.1", "10.0.0.1", {2U, 4U}}},
+          {field("ttl", "64", 1U, 1U),
+           field("source", "10.0.0.1", 2U, 4U)},
           {}, {}}}, {}};
     const netscope::protocol::protocol_node right{
         "Frame", {0U, 10U}, {},
         {{"IPv4", {0U, 10U},
-          {{"ttl", "63", "63", {1U, 1U}},
-           {"destination", "10.0.0.2", "10.0.0.2", {6U, 4U}}},
+          {field("ttl", "63", 1U, 1U),
+           field("destination", "10.0.0.2", 6U, 4U)},
           {}, {}}}, {}};
 
     const auto differences = netscope::analysis::compare_protocol_trees(left, right);
@@ -38,7 +49,7 @@ TEST(packet_compare_test, reports_changed_and_missing_protocol_fields_by_path) {
 
 TEST(packet_compare_test, omits_equal_fields) {
     const netscope::protocol::protocol_node packet{
-        "Frame", {0U, 1U}, {{"length", "1", "1 byte", {0U, 1U}}}, {}, {}};
+        "Frame", {0U, 1U}, {field("length", "1 byte", 0U, 1U)}, {}, {}};
     EXPECT_TRUE(netscope::analysis::compare_protocol_trees(packet, packet).empty());
 }
 
