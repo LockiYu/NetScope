@@ -5,7 +5,9 @@
 #include "netscope/packet/packet_repository.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QComboBox>
+#include <QClipboard>
 #include <QDockWidget>
 #include <QBrush>
 #include <QColor>
@@ -18,6 +20,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QInputDialog>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMetaObject>
 #include <QPlainTextEdit>
@@ -45,6 +49,7 @@
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -347,6 +352,8 @@ main_window::main_window(
     packet_table->horizontalHeader()->setSectionsMovable(true);
     packet_table->horizontalHeader()->setSectionResizeMode(QHeaderView::Interactive);
     packet_table->horizontalHeader()->setStretchLastSection(true);
+    packet_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    packet_table->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
 
     auto* const details = new QSplitter{Qt::Horizontal, workspace};
     details->setObjectName(QStringLiteral("detailsSplitter"));
@@ -555,6 +562,102 @@ main_window::main_window(
                                           .data(Qt::UserRole)
                                           .toULongLong();
             show_packet(static_cast<std::size_t>(stored_index));
+        });
+
+    connect(
+        packet_table,
+        &QTableView::customContextMenuRequested,
+        this,
+        [this, packet_table](const QPoint& position) {
+            const auto index = packet_table->indexAt(position);
+            if (!index.isValid()) {
+                return;
+            }
+            packet_table->selectRow(index.row());
+            const auto stored_index = static_cast<std::size_t>(
+                packet_model_->index(index.row(), 0)
+                    .data(Qt::UserRole)
+                    .toULongLong());
+            const auto annotation = annotations_.find(stored_index);
+            const bool marked = annotation != annotations_.end() && annotation->second.marked;
+
+            QMenu menu{packet_table};
+            auto* const mark_action = menu.addAction(
+                marked ? QStringLiteral("Unmark packet") : QStringLiteral("Mark packet"));
+            auto* const note_action = menu.addAction(QStringLiteral("Add or edit note…"));
+            menu.addSeparator();
+            auto* const copy_action = menu.addAction(QStringLiteral("Copy row"));
+            menu.addSeparator();
+            auto* const source_filter = menu.addAction(QStringLiteral("Filter by source"));
+            auto* const destination_filter = menu.addAction(
+                QStringLiteral("Filter by destination"));
+            auto* const protocol_filter = menu.addAction(QStringLiteral("Filter by protocol"));
+            const auto* const chosen = menu.exec(packet_table->viewport()->mapToGlobal(position));
+            if (chosen == nullptr) {
+                return;
+            }
+            const auto existing_note = annotation == annotations_.end()
+                ? std::string{}
+                : annotation->second.note;
+            if (chosen == mark_action) {
+                set_packet_annotation(stored_index, !marked, existing_note);
+                return;
+            }
+            if (chosen == note_action) {
+                bool accepted{false};
+                const auto note = QInputDialog::getMultiLineText(
+                    this,
+                    QStringLiteral("Packet note"),
+                    QStringLiteral("Note:"),
+                    QString::fromStdString(existing_note),
+                    &accepted);
+                if (accepted) {
+                    set_packet_annotation(stored_index, marked, note.toStdString());
+                }
+                return;
+            }
+            if (chosen == copy_action) {
+                QStringList values;
+                for (int column = 0; column < packet_model_->columnCount(); ++column) {
+                    values.push_back(packet_model_->index(index.row(), column).data().toString());
+                }
+                QApplication::clipboard()->setText(values.join(QLatin1Char('\t')));
+                return;
+            }
+            QString filter;
+            if (chosen == source_filter) {
+                filter = QStringLiteral("ip.src == %1").arg(
+                    packet_model_->index(index.row(), 3)
+                        .data(Qt::UserRole + 3).toString());
+            } else if (chosen == destination_filter) {
+                filter = QStringLiteral("ip.dst == %1").arg(
+                    packet_model_->index(index.row(), 5)
+                        .data(Qt::UserRole + 3).toString());
+            } else if (chosen == protocol_filter) {
+                filter = packet_model_->index(index.row(), 7).data().toString().toLower();
+            }
+            if (!filter.isEmpty()) {
+                display_filter_edit_->setText(filter);
+                apply_display_filter();
+            }
+        });
+
+    connect(
+        packet_table->horizontalHeader(),
+        &QHeaderView::customContextMenuRequested,
+        this,
+        [packet_table](const QPoint& position) {
+            QMenu menu{packet_table};
+            for (int column = 0; column < packet_table->model()->columnCount(); ++column) {
+                auto* const action = menu.addAction(
+                    packet_table->model()->headerData(column, Qt::Horizontal).toString());
+                action->setCheckable(true);
+                action->setChecked(!packet_table->isColumnHidden(column));
+                QObject::connect(action, &QAction::toggled, packet_table, [packet_table, column](bool visible) {
+                    packet_table->setColumnHidden(column, !visible);
+                });
+            }
+            menu.exec(packet_table->horizontalHeader()->mapToGlobal(position));
         });
 
     connect(
@@ -935,6 +1038,7 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     flow_tracker_.clear();
     statistics_.clear();
     anomaly_detector_.clear();
+    annotations_.clear();
     flow_model_->removeRows(0, flow_model_->rowCount());
     flow_data_->clear();
     anomaly_model_->removeRows(0, anomaly_model_->rowCount());
@@ -969,6 +1073,43 @@ void main_window::save_pcap(const std::filesystem::path& path) const {
         packets.push_back(record->capture.packet);
     }
     capture::write_pcap_file(path, 1, current_snapshot_length_, packets);
+}
+
+void main_window::set_packet_annotation(
+    const std::size_t packet_index,
+    const bool marked,
+    std::string note) {
+    if (packet_index >= packets_.size()) {
+        throw std::out_of_range{"packet annotation index is out of range"};
+    }
+    const auto tooltip = QString::fromStdString(note);
+    if (!marked && note.empty()) {
+        annotations_.erase(packet_index);
+    } else {
+        annotations_[packet_index] = packet_annotation{marked, std::move(note)};
+    }
+
+    for (int row = 0; row < packet_model_->rowCount(); ++row) {
+        auto* const number_item = packet_model_->item(row, 0);
+        if (number_item == nullptr ||
+            static_cast<std::size_t>(number_item->data(Qt::UserRole).toULongLong()) !=
+                packet_index) {
+            continue;
+        }
+        const auto& record = *packets_[packet_index];
+        number_item->setText(
+            marked
+                ? QStringLiteral("★ %1").arg(static_cast<qulonglong>(record.number))
+                : QString::number(record.number));
+        const QBrush background{
+            marked ? QColor{255, 244, 179} : protocol_color(record.protocol)};
+        for (int column = 0; column < packet_model_->columnCount(); ++column) {
+            auto* const item = packet_model_->item(row, column);
+            item->setBackground(background);
+            item->setData(tooltip, Qt::ToolTipRole);
+        }
+        return;
+    }
 }
 
 void main_window::show_packet(const std::size_t index) {

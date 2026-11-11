@@ -15,9 +15,11 @@
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <vector>
 
 class QPlainTextEdit;
@@ -52,6 +54,10 @@ public:
     void append_packet(std::shared_ptr<const packet::packet_record> packet);
     void load_pcap(const std::filesystem::path& path);
     void save_pcap(const std::filesystem::path& path) const;
+    void set_packet_annotation(
+        std::size_t packet_index,
+        bool marked,
+        std::string note);
 
 private:
     void show_packet(std::size_t index);
@@ -102,6 +108,11 @@ private:
     std::optional<std::chrono::system_clock::time_point> latest_capture_time_;
     int current_snapshot_length_{262144};
     std::optional<analysis::display_filter> display_filter_;
+    struct packet_annotation {
+        bool marked{false};
+        std::string note;
+    };
+    std::map<std::size_t, packet_annotation> annotations_;
 };
 
 }  // namespace netscope::ui
