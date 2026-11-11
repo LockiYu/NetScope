@@ -345,6 +345,25 @@ TEST(main_window_test, updates_traffic_statistics_and_protocol_chart) {
     EXPECT_TRUE(packet_count->text().contains(QStringLiteral("1")));
 }
 
+TEST(main_window_test, lists_explainable_anomaly_observations) {
+    netscope::ui::main_window window;
+    auto* const alerts = window.findChild<QTableView*>(QStringLiteral("anomalyTable"));
+    ASSERT_NE(alerts, nullptr);
+    netscope::packet::packet_repository repository{1U};
+    std::vector<std::uint8_t> bytes{0U, 1U, 2U};
+    const auto record = repository.append(netscope::capture::merged_packet{
+        netscope::capture::captured_packet{
+            std::chrono::system_clock::now(), 3U, 3U, std::move(bytes)},
+        {"en0"},
+    });
+
+    window.append_packet(record);
+    QApplication::processEvents();
+
+    ASSERT_EQ(alerts->model()->rowCount(), 1);
+    EXPECT_TRUE(alerts->model()->index(0, 2).data().toString().contains("truncated"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
