@@ -245,6 +245,18 @@ target_link_libraries(netscope_ip_reassembly_test PRIVATE
 
 gtest_discover_tests(netscope_ip_reassembly_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_packet_compare_test
+    unit/packet_compare_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_packet_compare_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_packet_compare_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
