@@ -57,6 +57,7 @@ endif()
 add_library(netscope_core STATIC
     src/build_info.cpp
     src/analysis/display_filter.cpp
+    src/analysis/reverse_dns.cpp
     src/capture/capture_runner.cpp
     src/capture/live_capture.cpp
     src/capture/packet_merger.cpp
