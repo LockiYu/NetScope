@@ -3,6 +3,7 @@
 #include "netscope/capture/capture_runner.h"
 #include "netscope/capture/packet_merger.h"
 #include "netscope/analysis/display_filter.h"
+#include "netscope/analysis/anomaly_detector.h"
 #include "netscope/analysis/reverse_dns.h"
 #include "netscope/analysis/tcp_flow.h"
 #include "netscope/analysis/traffic_statistics.h"
@@ -65,6 +66,7 @@ private:
 
     QStandardItemModel* packet_model_{nullptr};
     QStandardItemModel* flow_model_{nullptr};
+    QStandardItemModel* anomaly_model_{nullptr};
     QTableView* flow_table_{nullptr};
     QPlainTextEdit* flow_data_{nullptr};
     QLabel* statistics_packet_count_{nullptr};
@@ -90,6 +92,7 @@ private:
     analysis::reverse_dns_resolver reverse_dns_;
     analysis::tcp_flow_tracker flow_tracker_;
     analysis::traffic_statistics statistics_;
+    analysis::anomaly_detector anomaly_detector_;
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;

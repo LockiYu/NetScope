@@ -524,6 +524,23 @@ main_window::main_window(
     statistics_dock->setWidget(statistics_panel);
     addDockWidget(Qt::RightDockWidgetArea, statistics_dock);
 
+    auto* const anomaly_dock = new QDockWidget{QStringLiteral("Observations"), this};
+    anomaly_dock->setObjectName(QStringLiteral("anomalyDock"));
+    anomaly_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    auto* const anomaly_table = new QTableView{anomaly_dock};
+    anomaly_table->setObjectName(QStringLiteral("anomalyTable"));
+    anomaly_model_ = new QStandardItemModel{anomaly_table};
+    anomaly_model_->setHorizontalHeaderLabels({
+        QStringLiteral("Rule"), QStringLiteral("Observation"),
+        QStringLiteral("Evidence"), QStringLiteral("Related item"),
+    });
+    anomaly_table->setModel(anomaly_model_);
+    anomaly_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    anomaly_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    anomaly_table->horizontalHeader()->setStretchLastSection(true);
+    anomaly_dock->setWidget(anomaly_table);
+    addDockWidget(Qt::BottomDockWidgetArea, anomaly_dock);
+
     statusBar()->showMessage(QStringLiteral("Ready — select one or more interfaces"));
 
     connect(
@@ -833,6 +850,30 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     }
     statistics_.ingest(packets_.back());
     refresh_statistics_view();
+    auto alerts = anomaly_detector_.ingest(packets_.back());
+    const auto flow_alerts = anomaly_detector_.evaluate_flows(flow_tracker_.snapshot());
+    alerts.insert(alerts.end(), flow_alerts.begin(), flow_alerts.end());
+    for (const auto& alert : alerts) {
+        QString related;
+        if (alert.packet_number.has_value()) {
+            related = QStringLiteral("Packet %1").arg(
+                static_cast<qulonglong>(alert.packet_number.value()));
+        } else if (alert.flow_id.has_value()) {
+            related = QStringLiteral("Flow %1").arg(
+                static_cast<qulonglong>(alert.flow_id.value()));
+        }
+        QList<QStandardItem*> alert_row{
+            new QStandardItem{QString::fromStdString(alert.rule)},
+            new QStandardItem{QString::fromStdString(alert.title)},
+            new QStandardItem{QString::fromStdString(alert.evidence)},
+            new QStandardItem{related},
+        };
+        for (auto* const item : alert_row) {
+            item->setEditable(false);
+            item->setBackground(QColor{250, 225, 225});
+        }
+        anomaly_model_->appendRow(alert_row);
+    }
 
     const auto resolve_address = [this, stored_index](
                                      const std::string& address,
@@ -893,8 +934,10 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     repository_.clear();
     flow_tracker_.clear();
     statistics_.clear();
+    anomaly_detector_.clear();
     flow_model_->removeRows(0, flow_model_->rowCount());
     flow_data_->clear();
+    anomaly_model_->removeRows(0, anomaly_model_->rowCount());
     refresh_statistics_view();
     packet_model_->removeRows(0, packet_model_->rowCount());
     packets_.clear();
