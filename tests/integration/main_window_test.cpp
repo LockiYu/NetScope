@@ -291,6 +291,33 @@ TEST(main_window_test, applies_display_filters_without_deleting_packets) {
     EXPECT_FALSE(table->isRowHidden(0));
 }
 
+TEST(main_window_test, updates_address_display_after_reverse_dns_without_losing_raw_ip) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string& address) -> std::optional<std::string> {
+            return address == "192.168.1.10"
+                ? std::optional<std::string>{"client.example"}
+                : std::nullopt;
+        }};
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    window.append_packet(make_record());
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+    while (!table->model()->index(0, 3).data().toString().contains("client.example") &&
+           std::chrono::steady_clock::now() < deadline) {
+        QApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    }
+
+    EXPECT_TRUE(table->model()->index(0, 3).data().toString().contains("client.example"));
+    EXPECT_EQ(
+        table->model()->index(0, 3).data(Qt::UserRole + 3).toString(),
+        QStringLiteral("192.168.1.10"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
