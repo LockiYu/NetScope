@@ -3,6 +3,7 @@
 #include "netscope/capture/capture_runner.h"
 #include "netscope/capture/packet_merger.h"
 #include "netscope/analysis/display_filter.h"
+#include "netscope/analysis/reverse_dns.h"
 #include "netscope/packet/packet_repository.h"
 
 #include <QMainWindow>
@@ -37,6 +38,10 @@ public:
     explicit main_window(
         capture::capture_runner::opener opener,
         QWidget* parent = nullptr);
+    main_window(
+        capture::capture_runner::opener opener,
+        analysis::reverse_dns_resolver::lookup dns_lookup,
+        QWidget* parent = nullptr);
     ~main_window() override;
 
     void append_packet(std::shared_ptr<const packet::packet_record> packet);
@@ -68,6 +73,7 @@ private:
     std::optional<std::size_t> displayed_packet_index_;
     std::optional<std::size_t> current_byte_offset_;
     capture::capture_runner capture_runner_;
+    analysis::reverse_dns_resolver reverse_dns_;
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;

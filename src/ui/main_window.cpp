@@ -72,6 +72,16 @@ QColor protocol_color(const std::string& protocol) {
     return QColor{239, 241, 243};
 }
 
+class address_item final : public QStandardItem {
+public:
+    using QStandardItem::QStandardItem;
+
+    bool operator<(const QStandardItem& other) const override {
+        return data(Qt::UserRole + 3).toString() <
+               other.data(Qt::UserRole + 3).toString();
+    }
+};
+
 QString absolute_time(
     const std::chrono::system_clock::time_point timestamp) {
     const auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -207,12 +217,28 @@ std::optional<std::size_t> byte_at_text_position(
 namespace netscope::ui {
 
 main_window::main_window(QWidget* parent)
-    : main_window{capture::capture_runner::opener{capture::open_live_capture}, parent} {}
+    : main_window{
+          capture::capture_runner::opener{capture::open_live_capture},
+          analysis::reverse_dns_resolver::lookup{
+              analysis::reverse_dns_resolver::system_lookup},
+          parent} {}
 
 main_window::main_window(
     capture::capture_runner::opener opener,
     QWidget* parent)
-    : QMainWindow{parent}, capture_runner_{std::move(opener)} {
+    : main_window{
+          std::move(opener),
+          analysis::reverse_dns_resolver::lookup{
+              analysis::reverse_dns_resolver::system_lookup},
+          parent} {}
+
+main_window::main_window(
+    capture::capture_runner::opener opener,
+    analysis::reverse_dns_resolver::lookup dns_lookup,
+    QWidget* parent)
+    : QMainWindow{parent},
+      capture_runner_{std::move(opener)},
+      reverse_dns_{std::move(dns_lookup)} {
     setWindowTitle(QStringLiteral("NetScope"));
     setMinimumSize(960, 640);
 
@@ -666,9 +692,9 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         new QStandardItem{QString::number(record.number)},
         new QStandardItem{absolute_time(record.capture.packet.timestamp)},
         new QStandardItem{interfaces.join(QStringLiteral(", "))},
-        new QStandardItem{QString::fromStdString(record.source)},
+        new address_item{QString::fromStdString(record.source)},
         new QStandardItem{},
-        new QStandardItem{QString::fromStdString(record.destination)},
+        new address_item{QString::fromStdString(record.destination)},
         new QStandardItem{},
         new QStandardItem{QString::fromStdString(record.protocol)},
         new QStandardItem{QString::number(record.capture.packet.captured_length)},
@@ -680,7 +706,50 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         item->setBackground(background);
         item->setData(static_cast<qulonglong>(stored_index), Qt::UserRole);
     }
+    row[3]->setData(QString::fromStdString(record.source), Qt::UserRole + 3);
+    row[5]->setData(QString::fromStdString(record.destination), Qt::UserRole + 3);
     packet_model_->appendRow(row);
+
+    const auto resolve_address = [this, stored_index](
+                                     const std::string& address,
+                                     const int column) {
+        if (address.empty()) {
+            return;
+        }
+        reverse_dns_.resolve(
+            address,
+            [this, stored_index, column](
+                const std::string& raw_address,
+                std::optional<std::string> hostname) {
+                if (!hostname.has_value() || hostname->empty() ||
+                    hostname.value() == raw_address) {
+                    return;
+                }
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, stored_index, column, raw_address,
+                     hostname = std::move(hostname.value())] {
+                        for (int model_row = 0; model_row < packet_model_->rowCount();
+                             ++model_row) {
+                            auto* const number_item = packet_model_->item(model_row, 0);
+                            if (number_item == nullptr ||
+                                number_item->data(Qt::UserRole).toULongLong() !=
+                                    stored_index) {
+                                continue;
+                            }
+                            auto* const address_item = packet_model_->item(model_row, column);
+                            address_item->setText(
+                                QStringLiteral("%1 (%2)")
+                                    .arg(QString::fromStdString(hostname))
+                                    .arg(QString::fromStdString(raw_address)));
+                            break;
+                        }
+                    },
+                    Qt::QueuedConnection);
+            });
+    };
+    resolve_address(record.source, 3);
+    resolve_address(record.destination, 5);
     if (display_filter_.has_value()) {
         apply_display_filter();
     }
