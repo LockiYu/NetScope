@@ -91,6 +91,39 @@ QString absolute_time(
         .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
+QString flow_state_name(const netscope::analysis::tcp_flow_state state) {
+    switch (state) {
+    case netscope::analysis::tcp_flow_state::opening: return QStringLiteral("Opening");
+    case netscope::analysis::tcp_flow_state::established: return QStringLiteral("Established");
+    case netscope::analysis::tcp_flow_state::half_closed: return QStringLiteral("Half closed");
+    case netscope::analysis::tcp_flow_state::closed: return QStringLiteral("Closed");
+    case netscope::analysis::tcp_flow_state::reset: return QStringLiteral("Reset");
+    }
+    return QStringLiteral("Unknown");
+}
+
+QString endpoint_text(const netscope::analysis::tcp_endpoint& endpoint) {
+    const bool ipv6 = endpoint.address.find(':') != std::string::npos;
+    return ipv6
+        ? QStringLiteral("[%1]:%2")
+              .arg(QString::fromStdString(endpoint.address))
+              .arg(endpoint.port)
+        : QStringLiteral("%1:%2")
+              .arg(QString::fromStdString(endpoint.address))
+              .arg(endpoint.port);
+}
+
+QString printable_stream(const std::vector<std::uint8_t>& bytes) {
+    QString text;
+    text.reserve(static_cast<qsizetype>(bytes.size()));
+    for (const auto value : bytes) {
+        text += std::isprint(static_cast<unsigned char>(value)) != 0
+            ? QChar::fromLatin1(static_cast<char>(value))
+            : QLatin1Char('.');
+    }
+    return text;
+}
+
 struct formatted_hex {
     QString text;
     std::vector<int> byte_positions;
@@ -429,6 +462,33 @@ main_window::main_window(
     capture_dock->setWidget(dock_contents);
     addDockWidget(Qt::LeftDockWidgetArea, capture_dock);
 
+    auto* const flow_dock = new QDockWidget{QStringLiteral("TCP Flows"), this};
+    flow_dock->setObjectName(QStringLiteral("tcpFlowDock"));
+    flow_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
+    auto* const flow_panel = new QSplitter{Qt::Vertical, flow_dock};
+    flow_table_ = new QTableView{flow_panel};
+    flow_table_->setObjectName(QStringLiteral("tcpFlowTable"));
+    flow_model_ = new QStandardItemModel{flow_table_};
+    flow_model_->setHorizontalHeaderLabels({
+        QStringLiteral("ID"), QStringLiteral("Client"), QStringLiteral("Server"),
+        QStringLiteral("State"), QStringLiteral("Packets"), QStringLiteral("Bytes"),
+        QStringLiteral("RTT"), QStringLiteral("Retrans"), QStringLiteral("Out-of-order"),
+    });
+    flow_table_->setModel(flow_model_);
+    flow_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    flow_table_->setSelectionMode(QAbstractItemView::SingleSelection);
+    flow_table_->setSortingEnabled(true);
+    flow_table_->horizontalHeader()->setStretchLastSection(true);
+    flow_data_ = new QPlainTextEdit{flow_panel};
+    flow_data_->setObjectName(QStringLiteral("tcpFlowData"));
+    flow_data_->setReadOnly(true);
+    flow_data_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    flow_data_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    flow_data_->setPlaceholderText(QStringLiteral("Select a TCP flow to inspect reassembled data."));
+    flow_panel->setSizes({180, 120});
+    flow_dock->setWidget(flow_panel);
+    addDockWidget(Qt::BottomDockWidgetArea, flow_dock);
+
     statusBar()->showMessage(QStringLiteral("Ready — select one or more interfaces"));
 
     connect(
@@ -670,6 +730,30 @@ main_window::main_window(
         &QLineEdit::returnPressed,
         this,
         &main_window::apply_display_filter);
+    connect(
+        flow_table_->selectionModel(),
+        &QItemSelectionModel::currentRowChanged,
+        this,
+        [this](const QModelIndex& current) {
+            if (!current.isValid()) {
+                return;
+            }
+            const auto id = flow_model_->index(current.row(), 0)
+                                .data(Qt::UserRole).toULongLong();
+            const auto flows = flow_tracker_.snapshot();
+            const auto found = std::find_if(flows.begin(), flows.end(), [id](const auto& flow) {
+                return flow.id == id;
+            });
+            if (found == flows.end()) {
+                return;
+            }
+            flow_data_->setPlainText(
+                QStringLiteral("Client → Server (%1 bytes)\n%2\n\nServer → Client (%3 bytes)\n%4")
+                    .arg(static_cast<qulonglong>(found->client_to_server_data.size()))
+                    .arg(printable_stream(found->client_to_server_data))
+                    .arg(static_cast<qulonglong>(found->server_to_client_data.size()))
+                    .arg(printable_stream(found->server_to_client_data)));
+        });
 }
 
 main_window::~main_window() {
@@ -709,6 +793,9 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     row[3]->setData(QString::fromStdString(record.source), Qt::UserRole + 3);
     row[5]->setData(QString::fromStdString(record.destination), Qt::UserRole + 3);
     packet_model_->appendRow(row);
+    if (flow_tracker_.ingest(packets_.back()).has_value()) {
+        refresh_flow_view();
+    }
 
     const auto resolve_address = [this, stored_index](
                                      const std::string& address,
@@ -767,6 +854,9 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     }
 
     repository_.clear();
+    flow_tracker_.clear();
+    flow_model_->removeRows(0, flow_model_->rowCount());
+    flow_data_->clear();
     packet_model_->removeRows(0, packet_model_->rowCount());
     packets_.clear();
     protocol_tree_->clear();
@@ -966,6 +1056,38 @@ void main_window::apply_display_filter() {
             .arg(static_cast<qulonglong>(visible))
             .arg(static_cast<qulonglong>(packets_.size())),
         4000);
+}
+
+void main_window::refresh_flow_view() {
+    const bool sorting = flow_table_->isSortingEnabled();
+    flow_table_->setSortingEnabled(false);
+    flow_model_->removeRows(0, flow_model_->rowCount());
+    for (const auto& flow : flow_tracker_.snapshot()) {
+        const auto rtt = flow.round_trip_time.has_value()
+            ? QStringLiteral("%1 ms").arg(
+                  static_cast<double>(flow.round_trip_time->count()) / 1000.0,
+                  0,
+                  'f',
+                  3)
+            : QStringLiteral("—");
+        QList<QStandardItem*> row{
+            new QStandardItem{QString::number(flow.id)},
+            new QStandardItem{endpoint_text(flow.client)},
+            new QStandardItem{endpoint_text(flow.server)},
+            new QStandardItem{flow_state_name(flow.state)},
+            new QStandardItem{QString::number(flow.packet_count)},
+            new QStandardItem{QString::number(flow.byte_count)},
+            new QStandardItem{rtt},
+            new QStandardItem{QString::number(flow.retransmissions)},
+            new QStandardItem{QString::number(flow.out_of_order_segments)},
+        };
+        for (auto* const item : row) {
+            item->setEditable(false);
+            item->setData(static_cast<qulonglong>(flow.id), Qt::UserRole);
+        }
+        flow_model_->appendRow(row);
+    }
+    flow_table_->setSortingEnabled(sorting);
 }
 
 }  // namespace netscope::ui
