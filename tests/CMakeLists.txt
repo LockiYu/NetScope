@@ -185,6 +185,18 @@ target_link_libraries(netscope_application_parser_test PRIVATE
 
 gtest_discover_tests(netscope_application_parser_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_reverse_dns_test
+    unit/reverse_dns_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_reverse_dns_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_reverse_dns_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
