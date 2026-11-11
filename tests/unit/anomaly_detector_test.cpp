@@ -72,7 +72,9 @@ TEST(anomaly_detector_test, reports_malformed_packets_and_redacts_authentication
         {netscope::protocol::protocol_node{
             "Hypertext Transfer Protocol", {0U, 10U},
             {netscope::protocol::protocol_field{
-                "header_authorization", "Basic secret", "Basic secret", {0U, 10U}}},
+                "header_authorization", "Basic secret", "Basic secret", {0U, 10U},
+                std::nullopt, std::nullopt,
+                netscope::protocol::validation_status::not_checked, {}}},
             {}, {}}},
         {}};
     alerts = detector.ingest(http);
