@@ -50,6 +50,7 @@
 #include <QWidget>
 #include <QChart>
 #include <QChartView>
+#include <QLineSeries>
 #include <QPieSeries>
 
 #include <exception>
@@ -532,13 +533,23 @@ main_window::main_window(
     flow_table_->setSortingEnabled(true);
     flow_table_->horizontalHeader()->setStretchLastSection(true);
     flow_table_->setContextMenuPolicy(Qt::CustomContextMenu);
+    auto* const flow_timing_series = new QLineSeries{flow_panel};
+    flow_timing_series->setName(QStringLiteral("Cumulative bytes"));
+    auto* const flow_chart = new QChart{};
+    flow_chart->addSeries(flow_timing_series);
+    flow_chart->setTitle(QStringLiteral("Flow timing"));
+    flow_chart->createDefaultAxes();
+    auto* const flow_chart_view = new QChartView{flow_chart, flow_panel};
+    flow_chart_view->setObjectName(QStringLiteral("flowTimingChart"));
+    flow_chart_view->setRenderHint(QPainter::Antialiasing);
+    flow_chart_view->setMaximumHeight(180);
     flow_data_ = new QPlainTextEdit{flow_panel};
     flow_data_->setObjectName(QStringLiteral("tcpFlowData"));
     flow_data_->setReadOnly(true);
     flow_data_->setLineWrapMode(QPlainTextEdit::NoWrap);
     flow_data_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     flow_data_->setPlaceholderText(QStringLiteral("Select a TCP flow to inspect reassembled data."));
-    flow_panel->setSizes({180, 120});
+    flow_panel->setSizes({180, 150, 120});
     flow_dock->setWidget(flow_panel);
     addDockWidget(Qt::BottomDockWidgetArea, flow_dock);
 
@@ -1149,7 +1160,7 @@ main_window::main_window(
         flow_table_->selectionModel(),
         &QItemSelectionModel::currentRowChanged,
         this,
-        [this](const QModelIndex& current) {
+        [this, flow_timing_series, flow_chart](const QModelIndex& current) {
             if (!current.isValid()) {
                 return;
             }
@@ -1168,6 +1179,31 @@ main_window::main_window(
                     .arg(printable_stream(found->client_to_server_data))
                     .arg(static_cast<qulonglong>(found->server_to_client_data.size()))
                     .arg(printable_stream(found->server_to_client_data)));
+            flow_timing_series->clear();
+            std::optional<std::chrono::system_clock::time_point> first_time;
+            std::uint64_t cumulative_bytes{0U};
+            for (const auto packet_number : found->packet_numbers) {
+                const auto packet = std::find_if(
+                    packets_.begin(), packets_.end(), [packet_number](const auto& item) {
+                        return item->number == packet_number;
+                    });
+                if (packet == packets_.end()) {
+                    continue;
+                }
+                const auto timestamp = (*packet)->capture.packet.timestamp;
+                if (!first_time.has_value()) {
+                    first_time = timestamp;
+                }
+                cumulative_bytes += (*packet)->capture.packet.captured_length;
+                const auto elapsed = std::chrono::duration<double, std::milli>(
+                    timestamp - first_time.value()).count();
+                flow_timing_series->append(elapsed, static_cast<qreal>(cumulative_bytes));
+            }
+            for (auto* const axis : flow_chart->axes()) {
+                flow_chart->removeAxis(axis);
+                axis->deleteLater();
+            }
+            flow_chart->createDefaultAxes();
         });
     connect(
         flow_table_,
