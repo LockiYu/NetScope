@@ -7,6 +7,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QDockWidget>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -420,6 +421,31 @@ TEST(main_window_test, reports_completed_ip_fragment_reassembly) {
         QStringLiteral("IP fragment reassembly"));
     EXPECT_TRUE(
         observations->model()->index(0, 2).data().toString().contains("12 bytes"));
+}
+
+TEST(main_window_test, exports_visible_packets_flow_packets_and_protocol_json) {
+    netscope::ui::main_window window;
+    window.append_packet(make_record());
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto visible_path = std::filesystem::path{
+        directory.filePath(QStringLiteral("visible.pcap")).toStdString()};
+    const auto flow_path = std::filesystem::path{
+        directory.filePath(QStringLiteral("flow.pcap")).toStdString()};
+    const auto json_path = std::filesystem::path{
+        directory.filePath(QStringLiteral("packet.json")).toStdString()};
+
+    window.save_visible_pcap(visible_path);
+    window.save_flow_pcap(1U, flow_path);
+    window.export_packet_json(0U, json_path);
+
+    EXPECT_EQ(netscope::capture::read_pcap_file(visible_path).packets.size(), 1U);
+    EXPECT_EQ(netscope::capture::read_pcap_file(flow_path).packets.size(), 1U);
+    QFile json_file{QString::fromStdString(json_path.string())};
+    ASSERT_TRUE(json_file.open(QIODevice::ReadOnly));
+    const auto json = json_file.readAll();
+    EXPECT_TRUE(json.contains("\"name\":\"Frame\""));
+    EXPECT_TRUE(json.contains("\"fields\""));
 }
 
 }  // namespace
