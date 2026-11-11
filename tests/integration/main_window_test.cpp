@@ -364,6 +364,20 @@ TEST(main_window_test, lists_explainable_anomaly_observations) {
     EXPECT_TRUE(alerts->model()->index(0, 2).data().toString().contains("truncated"));
 }
 
+TEST(main_window_test, marks_and_annotates_packets_without_changing_capture_data) {
+    netscope::ui::main_window window;
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    window.append_packet(make_record());
+
+    window.set_packet_annotation(0U, true, "Investigate handshake");
+
+    EXPECT_TRUE(table->model()->index(0, 0).data().toString().startsWith(QStringLiteral("★")));
+    EXPECT_EQ(
+        table->model()->index(0, 9).data(Qt::ToolTipRole).toString(),
+        QStringLiteral("Investigate handshake"));
+    EXPECT_EQ(table->model()->rowCount(), 1);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
