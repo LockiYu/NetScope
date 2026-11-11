@@ -1,6 +1,7 @@
 #include "netscope/ui/main_window.h"
 
 #include "netscope/capture/live_capture.h"
+#include "netscope/analysis/packet_compare.h"
 #include "netscope/packet/byte_inspector.h"
 #include "netscope/packet/packet_repository.h"
 
@@ -12,6 +13,8 @@
 #include <QBrush>
 #include <QColor>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFontDatabase>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -297,6 +300,10 @@ main_window::main_window(
     auto* const export_json_action = file_menu->addAction(
         QStringLiteral("Export selected packet as JSON…"));
     export_json_action->setObjectName(QStringLiteral("exportPacketJsonAction"));
+    auto* const analysis_menu = menuBar()->addMenu(QStringLiteral("Analysis"));
+    auto* const compare_action = analysis_menu->addAction(
+        QStringLiteral("Compare selected packets…"));
+    compare_action->setObjectName(QStringLiteral("comparePacketsAction"));
 
     auto* const toolbar = addToolBar(QStringLiteral("Capture"));
     toolbar->setObjectName(QStringLiteral("captureToolBar"));
@@ -353,7 +360,7 @@ main_window::main_window(
     packet_table->setModel(packet_model_);
     packet_table->setSortingEnabled(true);
     packet_table->setSelectionBehavior(QAbstractItemView::SelectRows);
-    packet_table->setSelectionMode(QAbstractItemView::SingleSelection);
+    packet_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
     packet_table->setAlternatingRowColors(true);
     packet_table->verticalHeader()->setVisible(false);
     packet_table->horizontalHeader()->setSectionsMovable(true);
@@ -571,6 +578,60 @@ main_window::main_window(
                                           .toULongLong();
             show_packet(static_cast<std::size_t>(stored_index));
         });
+    connect(compare_action, &QAction::triggered, this, [this, packet_table] {
+        const auto rows = packet_table->selectionModel()->selectedRows(0);
+        if (rows.size() != 2) {
+            statusBar()->showMessage(QStringLiteral("Select exactly two packets to compare"), 4000);
+            return;
+        }
+        const auto left_index = static_cast<std::size_t>(
+            rows[0].data(Qt::UserRole).toULongLong());
+        const auto right_index = static_cast<std::size_t>(
+            rows[1].data(Qt::UserRole).toULongLong());
+        if (left_index >= packets_.size() || right_index >= packets_.size()) {
+            return;
+        }
+        const auto differences = analysis::compare_protocol_trees(
+            packets_[left_index]->analysis,
+            packets_[right_index]->analysis);
+        QDialog dialog{this};
+        dialog.setWindowTitle(QStringLiteral("Compare packets %1 and %2")
+            .arg(static_cast<qulonglong>(packets_[left_index]->number))
+            .arg(static_cast<qulonglong>(packets_[right_index]->number)));
+        dialog.resize(900, 520);
+        auto* const layout = new QVBoxLayout{&dialog};
+        auto* const table = new QTableView{&dialog};
+        auto* const model = new QStandardItemModel{table};
+        model->setHorizontalHeaderLabels({
+            QStringLiteral("Field path"),
+            QStringLiteral("Packet %1").arg(static_cast<qulonglong>(packets_[left_index]->number)),
+            QStringLiteral("Packet %1").arg(static_cast<qulonglong>(packets_[right_index]->number)),
+        });
+        for (const auto& difference : differences) {
+            QList<QStandardItem*> row{
+                new QStandardItem{QString::fromStdString(difference.path)},
+                new QStandardItem{QString::fromStdString(difference.left_value)},
+                new QStandardItem{QString::fromStdString(difference.right_value)},
+            };
+            for (auto* const item : row) {
+                item->setEditable(false);
+            }
+            model->appendRow(row);
+        }
+        table->setModel(model);
+        table->setAlternatingRowColors(true);
+        table->horizontalHeader()->setStretchLastSection(true);
+        layout->addWidget(new QLabel{
+            differences.empty()
+                ? QStringLiteral("No protocol-field differences")
+                : QStringLiteral("%1 differing field(s)").arg(differences.size()),
+            &dialog});
+        layout->addWidget(table, 1);
+        auto* const buttons = new QDialogButtonBox{QDialogButtonBox::Close, &dialog};
+        connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+        layout->addWidget(buttons);
+        dialog.exec();
+    });
 
     connect(
         packet_table,
