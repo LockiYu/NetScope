@@ -6,6 +6,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDockWidget>
 #include <QFile>
 #include <QLabel>
@@ -154,7 +155,12 @@ TEST(main_window_test, provides_capture_controls_and_multi_interface_selection) 
     netscope::ui::main_window window;
 
     EXPECT_NE(window.findChild<QListWidget*>(QStringLiteral("interfaceList")), nullptr);
-    EXPECT_NE(window.findChild<QLineEdit*>(QStringLiteral("captureFilterEdit")), nullptr);
+    const auto* filter = window.findChild<QLineEdit*>(QStringLiteral("captureFilterEdit"));
+    ASSERT_NE(filter, nullptr);
+    EXPECT_NE(filter->completer(), nullptr);
+    EXPECT_NE(
+        window.findChild<QObject*>(QStringLiteral("captureFilterFavoriteAction")),
+        nullptr);
     EXPECT_NE(window.findChild<QDockWidget*>(QStringLiteral("captureDock")), nullptr);
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("startCaptureAction")), nullptr);
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("pauseCaptureAction")), nullptr);
