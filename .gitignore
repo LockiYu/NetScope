@@ -4,4 +4,4 @@
 /compile_commands.json
 *.profraw
 *.profdata
-
+docs/rendered*/
