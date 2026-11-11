@@ -144,6 +144,8 @@ TEST(main_window_test, provides_packet_protocol_and_hex_workspaces) {
     ASSERT_NE(protocol_tree, nullptr);
     ASSERT_NE(hex_view, nullptr);
     EXPECT_TRUE(packet_table->isSortingEnabled());
+    EXPECT_EQ(packet_table->selectionMode(), QAbstractItemView::ExtendedSelection);
+    EXPECT_NE(window.findChild<QObject*>(QStringLiteral("comparePacketsAction")), nullptr);
     EXPECT_EQ(protocol_tree->columnCount(), 2);
     EXPECT_TRUE(hex_view->isReadOnly());
 }
