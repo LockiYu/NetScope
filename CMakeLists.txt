@@ -59,6 +59,7 @@ add_library(netscope_core STATIC
     src/analysis/display_filter.cpp
     src/analysis/reverse_dns.cpp
     src/analysis/tcp_flow.cpp
+    src/analysis/traffic_statistics.cpp
     src/capture/capture_runner.cpp
     src/capture/live_capture.cpp
     src/capture/packet_merger.cpp
