@@ -332,6 +332,19 @@ TEST(main_window_test, exposes_tracked_tcp_flows_in_a_dedicated_view) {
     EXPECT_TRUE(flow_table->model()->index(0, 1).data().toString().contains("192.168.1.10"));
 }
 
+TEST(main_window_test, updates_traffic_statistics_and_protocol_chart) {
+    netscope::ui::main_window window;
+    auto* const packet_count = window.findChild<QLabel*>(QStringLiteral("statisticsPacketCount"));
+    auto* const protocol_chart = window.findChild<QObject*>(QStringLiteral("protocolChart"));
+    ASSERT_NE(packet_count, nullptr);
+    ASSERT_NE(protocol_chart, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+
+    EXPECT_TRUE(packet_count->text().contains(QStringLiteral("1")));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
