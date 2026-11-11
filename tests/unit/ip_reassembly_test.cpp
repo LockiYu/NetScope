@@ -51,7 +51,8 @@ std::shared_ptr<const netscope::packet::packet_record> ipv6_fragment(
     const std::string& payload) {
     const auto payload_length = static_cast<std::uint16_t>(8U + payload.size());
     const auto fragment_bits = static_cast<std::uint16_t>(
-        (offset_units << 3U) | (more_fragments ? 1U : 0U));
+        static_cast<std::uint16_t>(offset_units << 3U) |
+        static_cast<std::uint16_t>(more_fragments ? 1U : 0U));
     std::vector<std::uint8_t> bytes{
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x86, 0xdd,
         0x60, 0, 0, 0,

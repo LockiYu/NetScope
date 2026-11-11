@@ -73,6 +73,33 @@ std::shared_ptr<const netscope::packet::packet_record> make_record() {
     });
 }
 
+std::shared_ptr<const netscope::packet::packet_record> make_fragment(
+    netscope::packet::packet_repository& repository,
+    const std::uint16_t offset_units,
+    const bool more,
+    const std::string& payload) {
+    const auto total = static_cast<std::uint16_t>(20U + payload.size());
+    const auto fragment = static_cast<std::uint16_t>(
+        (more ? 0x2000U : 0U) | offset_units);
+    std::vector<std::uint8_t> bytes{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
+        0x45, 0, static_cast<std::uint8_t>(total >> 8U),
+        static_cast<std::uint8_t>(total), 0x12, 0x34,
+        static_cast<std::uint8_t>(fragment >> 8U),
+        static_cast<std::uint8_t>(fragment), 64, 17, 0, 0,
+        10, 0, 0, 1, 10, 0, 0, 2,
+    };
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    return repository.append(netscope::capture::merged_packet{
+        netscope::capture::captured_packet{
+            std::chrono::system_clock::now(),
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(bytes.size()),
+            std::move(bytes)},
+        {"en0"},
+    });
+}
+
 class ui_packet_backend final : public netscope::capture::capture_backend {
 public:
     std::optional<netscope::capture::captured_packet> next_packet() override {
@@ -376,6 +403,23 @@ TEST(main_window_test, marks_and_annotates_packets_without_changing_capture_data
         table->model()->index(0, 9).data(Qt::ToolTipRole).toString(),
         QStringLiteral("Investigate handshake"));
     EXPECT_EQ(table->model()->rowCount(), 1);
+}
+
+TEST(main_window_test, reports_completed_ip_fragment_reassembly) {
+    netscope::ui::main_window window;
+    auto* const observations = window.findChild<QTableView*>(QStringLiteral("anomalyTable"));
+    netscope::packet::packet_repository repository{4U};
+
+    window.append_packet(make_fragment(repository, 0U, true, "ABCDEFGH"));
+    window.append_packet(make_fragment(repository, 1U, false, "IJKL"));
+
+    ASSERT_NE(observations, nullptr);
+    ASSERT_EQ(observations->model()->rowCount(), 1);
+    EXPECT_EQ(
+        observations->model()->index(0, 0).data().toString(),
+        QStringLiteral("IP fragment reassembly"));
+    EXPECT_TRUE(
+        observations->model()->index(0, 2).data().toString().contains("12 bytes"));
 }
 
 }  // namespace

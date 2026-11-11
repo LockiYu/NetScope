@@ -951,6 +951,26 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     if (flow_tracker_.ingest(packets_.back()).has_value()) {
         refresh_flow_view();
     }
+    if (const auto datagram = ip_reassembler_.ingest(packets_.back());
+        datagram.has_value()) {
+        const auto evidence = QStringLiteral(
+            "Reassembled %1 bytes from %2 fragments; %3 overlapping byte(s).")
+            .arg(static_cast<qulonglong>(datagram->payload.size()))
+            .arg(static_cast<qulonglong>(datagram->fragment_count))
+            .arg(static_cast<qulonglong>(datagram->overlapping_bytes));
+        QList<QStandardItem*> reassembly_row{
+            new QStandardItem{QStringLiteral("IP fragment reassembly")},
+            new QStandardItem{QStringLiteral("Completed fragmented datagram")},
+            new QStandardItem{evidence},
+            new QStandardItem{QStringLiteral("Packet %1")
+                .arg(static_cast<qulonglong>(record.number))},
+        };
+        for (auto* const item : reassembly_row) {
+            item->setEditable(false);
+            item->setBackground(QColor{224, 240, 255});
+        }
+        anomaly_model_->appendRow(reassembly_row);
+    }
     statistics_.ingest(packets_.back());
     refresh_statistics_view();
     auto alerts = anomaly_detector_.ingest(packets_.back());
@@ -1038,6 +1058,7 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     flow_tracker_.clear();
     statistics_.clear();
     anomaly_detector_.clear();
+    ip_reassembler_.clear();
     annotations_.clear();
     flow_model_->removeRows(0, flow_model_->rowCount());
     flow_data_->clear();

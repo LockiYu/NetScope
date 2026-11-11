@@ -57,6 +57,7 @@ endif()
 add_library(netscope_core STATIC
     src/build_info.cpp
     src/analysis/display_filter.cpp
+    src/analysis/ip_reassembly.cpp
     src/analysis/anomaly_detector.cpp
     src/analysis/reverse_dns.cpp
     src/analysis/tcp_flow.cpp
