@@ -361,6 +361,7 @@ TEST(main_window_test, exposes_tracked_tcp_flows_in_a_dedicated_view) {
     auto* const flow_data = window.findChild<QPlainTextEdit*>(QStringLiteral("tcpFlowData"));
     ASSERT_NE(flow_table, nullptr);
     ASSERT_NE(flow_data, nullptr);
+    EXPECT_NE(window.findChild<QObject*>(QStringLiteral("flowTimingChart")), nullptr);
 
     window.append_packet(make_record());
     QApplication::processEvents();
