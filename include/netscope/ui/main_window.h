@@ -55,6 +55,11 @@ public:
     void append_packet(std::shared_ptr<const packet::packet_record> packet);
     void load_pcap(const std::filesystem::path& path);
     void save_pcap(const std::filesystem::path& path) const;
+    void save_visible_pcap(const std::filesystem::path& path) const;
+    void save_flow_pcap(std::uint64_t flow_id, const std::filesystem::path& path) const;
+    void export_packet_json(
+        std::size_t packet_index,
+        const std::filesystem::path& path) const;
     void set_packet_annotation(
         std::size_t packet_index,
         bool marked,

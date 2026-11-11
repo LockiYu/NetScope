@@ -45,6 +45,7 @@
 #include <QPieSeries>
 
 #include <exception>
+#include <fstream>
 #include <chrono>
 #include <algorithm>
 #include <cctype>
@@ -290,6 +291,12 @@ main_window::main_window(
     auto* const save_action = file_menu->addAction(QStringLiteral("Save PCAP As…"));
     save_action->setObjectName(QStringLiteral("savePcapAction"));
     save_action->setShortcut(QKeySequence::SaveAs);
+    auto* const save_visible_action = file_menu->addAction(
+        QStringLiteral("Export visible packets…"));
+    save_visible_action->setObjectName(QStringLiteral("saveVisiblePcapAction"));
+    auto* const export_json_action = file_menu->addAction(
+        QStringLiteral("Export selected packet as JSON…"));
+    export_json_action->setObjectName(QStringLiteral("exportPacketJsonAction"));
 
     auto* const toolbar = addToolBar(QStringLiteral("Capture"));
     toolbar->setObjectName(QStringLiteral("captureToolBar"));
@@ -489,6 +496,7 @@ main_window::main_window(
     flow_table_->setSelectionMode(QAbstractItemView::SingleSelection);
     flow_table_->setSortingEnabled(true);
     flow_table_->horizontalHeader()->setStretchLastSection(true);
+    flow_table_->setContextMenuPolicy(Qt::CustomContextMenu);
     flow_data_ = new QPlainTextEdit{flow_panel};
     flow_data_->setObjectName(QStringLiteral("tcpFlowData"));
     flow_data_->setReadOnly(true);
@@ -880,6 +888,44 @@ main_window::main_window(
             statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
         }
     });
+    connect(save_visible_action, &QAction::triggered, this, [this] {
+        const auto path = QFileDialog::getSaveFileName(
+            this,
+            QStringLiteral("Export visible packets"),
+            QStringLiteral("visible-packets.pcap"),
+            QStringLiteral("PCAP files (*.pcap)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            save_visible_pcap(std::filesystem::path{path.toStdString()});
+            statusBar()->showMessage(QStringLiteral("Visible packets exported"), 4000);
+        } catch (const std::exception& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+        }
+    });
+    connect(export_json_action, &QAction::triggered, this, [this] {
+        if (!displayed_packet_index_.has_value()) {
+            statusBar()->showMessage(QStringLiteral("Select a packet first"), 4000);
+            return;
+        }
+        const auto path = QFileDialog::getSaveFileName(
+            this,
+            QStringLiteral("Export protocol analysis"),
+            QStringLiteral("packet.json"),
+            QStringLiteral("JSON files (*.json)"));
+        if (path.isEmpty()) {
+            return;
+        }
+        try {
+            export_packet_json(
+                displayed_packet_index_.value(),
+                std::filesystem::path{path.toStdString()});
+            statusBar()->showMessage(QStringLiteral("Protocol JSON exported"), 4000);
+        } catch (const std::exception& error) {
+            statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+        }
+    });
     connect(
         display_filter_edit_,
         &QLineEdit::returnPressed,
@@ -908,6 +954,38 @@ main_window::main_window(
                     .arg(printable_stream(found->client_to_server_data))
                     .arg(static_cast<qulonglong>(found->server_to_client_data.size()))
                     .arg(printable_stream(found->server_to_client_data)));
+        });
+    connect(
+        flow_table_,
+        &QTableView::customContextMenuRequested,
+        this,
+        [this](const QPoint& position) {
+            const auto index = flow_table_->indexAt(position);
+            if (!index.isValid()) {
+                return;
+            }
+            flow_table_->selectRow(index.row());
+            QMenu menu{flow_table_};
+            auto* const export_action = menu.addAction(QStringLiteral("Export flow as PCAP…"));
+            if (menu.exec(flow_table_->viewport()->mapToGlobal(position)) != export_action) {
+                return;
+            }
+            const auto flow_id = flow_model_->index(index.row(), 0)
+                                     .data(Qt::UserRole).toULongLong();
+            const auto path = QFileDialog::getSaveFileName(
+                this,
+                QStringLiteral("Export TCP flow"),
+                QStringLiteral("flow-%1.pcap").arg(flow_id),
+                QStringLiteral("PCAP files (*.pcap)"));
+            if (path.isEmpty()) {
+                return;
+            }
+            try {
+                save_flow_pcap(flow_id, std::filesystem::path{path.toStdString()});
+                statusBar()->showMessage(QStringLiteral("TCP flow exported"), 4000);
+            } catch (const std::exception& error) {
+                statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
+            }
         });
 }
 
@@ -1094,6 +1172,63 @@ void main_window::save_pcap(const std::filesystem::path& path) const {
         packets.push_back(record->capture.packet);
     }
     capture::write_pcap_file(path, 1, current_snapshot_length_, packets);
+}
+
+void main_window::save_visible_pcap(const std::filesystem::path& path) const {
+    const auto* const table = findChild<QTableView*>(QStringLiteral("packetTable"));
+    if (table == nullptr) {
+        throw std::runtime_error{"packet table is unavailable"};
+    }
+    std::vector<capture::captured_packet> visible;
+    for (int row = 0; row < packet_model_->rowCount(); ++row) {
+        if (table->isRowHidden(row)) {
+            continue;
+        }
+        const auto index = static_cast<std::size_t>(
+            packet_model_->index(row, 0).data(Qt::UserRole).toULongLong());
+        if (index < packets_.size()) {
+            visible.push_back(packets_[index]->capture.packet);
+        }
+    }
+    capture::write_pcap_file(path, 1, current_snapshot_length_, visible);
+}
+
+void main_window::save_flow_pcap(
+    const std::uint64_t flow_id,
+    const std::filesystem::path& path) const {
+    const auto flows = flow_tracker_.snapshot();
+    const auto flow = std::find_if(flows.begin(), flows.end(), [flow_id](const auto& item) {
+        return item.id == flow_id;
+    });
+    if (flow == flows.end()) {
+        throw std::out_of_range{"TCP flow does not exist"};
+    }
+    std::vector<capture::captured_packet> output;
+    for (const auto number : flow->packet_numbers) {
+        const auto packet = std::find_if(packets_.begin(), packets_.end(), [number](const auto& item) {
+            return item->number == number;
+        });
+        if (packet != packets_.end()) {
+            output.push_back((*packet)->capture.packet);
+        }
+    }
+    capture::write_pcap_file(path, 1, current_snapshot_length_, output);
+}
+
+void main_window::export_packet_json(
+    const std::size_t packet_index,
+    const std::filesystem::path& path) const {
+    if (packet_index >= packets_.size()) {
+        throw std::out_of_range{"packet export index is out of range"};
+    }
+    std::ofstream output{path, std::ios::binary | std::ios::trunc};
+    if (!output) {
+        throw std::runtime_error{"unable to open JSON export file"};
+    }
+    output << protocol::to_json(packets_[packet_index]->analysis) << '\n';
+    if (!output) {
+        throw std::runtime_error{"unable to write JSON export file"};
+    }
 }
 
 void main_window::set_packet_annotation(
