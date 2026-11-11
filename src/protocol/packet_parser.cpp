@@ -549,7 +549,7 @@ protocol_node parse_ipv4(const byte_view frame, const std::size_t offset) {
     }
     const auto bounded_total_length = std::min(
         static_cast<std::size_t>(total_length), available);
-    if ((flags_fragment & 0x1fffU) == 0U && bounded_total_length >= header_length) {
+    if ((flags_fragment & 0x3fffU) == 0U && bounded_total_length >= header_length) {
         add_transport_child(
             node,
             frame,

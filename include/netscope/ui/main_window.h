@@ -4,6 +4,7 @@
 #include "netscope/capture/packet_merger.h"
 #include "netscope/analysis/display_filter.h"
 #include "netscope/analysis/anomaly_detector.h"
+#include "netscope/analysis/ip_reassembly.h"
 #include "netscope/analysis/reverse_dns.h"
 #include "netscope/analysis/tcp_flow.h"
 #include "netscope/analysis/traffic_statistics.h"
@@ -99,6 +100,7 @@ private:
     analysis::tcp_flow_tracker flow_tracker_;
     analysis::traffic_statistics statistics_;
     analysis::anomaly_detector anomaly_detector_;
+    analysis::ip_reassembler ip_reassembler_;
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;
