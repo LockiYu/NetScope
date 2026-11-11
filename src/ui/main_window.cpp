@@ -9,6 +9,8 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QClipboard>
+#include <QCompleter>
+#include <QCoreApplication>
 #include <QDockWidget>
 #include <QBrush>
 #include <QColor>
@@ -30,11 +32,13 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSettings>
 #include <QSplitter>
 #include <QSpinBox>
 #include <QStandardItemModel>
 #include <QItemSelectionModel>
 #include <QStringList>
+#include <QStringListModel>
 #include <QStatusBar>
 #include <QTableView>
 #include <QToolBar>
@@ -329,6 +333,29 @@ main_window::main_window(
     filter_edit->setClearButtonEnabled(true);
     filter_edit->setMinimumWidth(260);
     toolbar->addWidget(filter_edit);
+    QStringList filter_suggestions{
+        QStringLiteral("tcp"), QStringLiteral("udp"), QStringLiteral("icmp"),
+        QStringLiteral("icmp6"), QStringLiteral("arp"), QStringLiteral("port 53"),
+        QStringLiteral("tcp port 80"), QStringLiteral("tcp port 443"),
+        QStringLiteral("not port 22"),
+    };
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        const auto history = settings.value(QStringLiteral("capture/filterHistory")).toStringList();
+        const auto favorites = settings.value(QStringLiteral("capture/filterFavorites")).toStringList();
+        for (const auto& value : history + favorites) {
+            if (!value.isEmpty() && !filter_suggestions.contains(value)) {
+                filter_suggestions.push_back(value);
+            }
+        }
+    }
+    auto* const filter_completer = new QCompleter{filter_suggestions, filter_edit};
+    filter_completer->setCaseSensitivity(Qt::CaseInsensitive);
+    filter_completer->setFilterMode(Qt::MatchContains);
+    filter_edit->setCompleter(filter_completer);
+    auto* const favorite_filter_action = toolbar->addAction(QStringLiteral("★"));
+    favorite_filter_action->setObjectName(QStringLiteral("captureFilterFavoriteAction"));
+    favorite_filter_action->setToolTip(QStringLiteral("Add current capture filter to favorites"));
     toolbar->addSeparator();
     toolbar->addWidget(new QLabel{QStringLiteral("Display filter:"), toolbar});
     display_filter_edit_ = new QLineEdit{toolbar};
@@ -846,6 +873,29 @@ main_window::main_window(
             }
         });
 
+    connect(favorite_filter_action, &QAction::triggered, this, [this, filter_edit] {
+        const auto filter = filter_edit->text().trimmed();
+        if (filter.isEmpty()) {
+            statusBar()->showMessage(QStringLiteral("Enter a capture filter first"), 3000);
+            return;
+        }
+        if (!QCoreApplication::organizationName().isEmpty()) {
+            QSettings settings;
+            auto favorites = settings.value(QStringLiteral("capture/filterFavorites")).toStringList();
+            favorites.removeAll(filter);
+            favorites.prepend(filter);
+            settings.setValue(QStringLiteral("capture/filterFavorites"), favorites.mid(0, 20));
+        }
+        auto* const model = qobject_cast<QStringListModel*>(filter_edit->completer()->model());
+        if (model != nullptr) {
+            auto suggestions = model->stringList();
+            suggestions.removeAll(filter);
+            suggestions.prepend(filter);
+            model->setStringList(suggestions);
+        }
+        statusBar()->showMessage(QStringLiteral("Capture filter added to favorites"), 3000);
+    });
+
     connect(start_action_, &QAction::triggered, this, [this, interface_list, filter_edit, snap_length] {
         std::vector<std::string> interfaces;
         for (int index = 0; index < interface_list->count(); ++index) {
@@ -897,6 +947,25 @@ main_window::main_window(
             snap_length->setEnabled(false);
             statusBar()->showMessage(
                 QStringLiteral("Capturing on %1 interface(s)").arg(interfaces.size()));
+            const auto used_filter = filter_edit->text().trimmed();
+            if (!used_filter.isEmpty()) {
+                auto* const model = qobject_cast<QStringListModel*>(
+                    filter_edit->completer()->model());
+                if (model != nullptr) {
+                    auto suggestions = model->stringList();
+                    suggestions.removeAll(used_filter);
+                    suggestions.prepend(used_filter);
+                    model->setStringList(suggestions);
+                }
+                if (!QCoreApplication::organizationName().isEmpty()) {
+                    QSettings settings;
+                    auto history = settings.value(
+                        QStringLiteral("capture/filterHistory")).toStringList();
+                    history.removeAll(used_filter);
+                    history.prepend(used_filter);
+                    settings.setValue(QStringLiteral("capture/filterHistory"), history.mid(0, 30));
+                }
+            }
         } catch (const std::exception& error) {
             statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
         }
@@ -1048,10 +1117,37 @@ main_window::main_window(
                 statusBar()->showMessage(QString::fromUtf8(error.what()), 8000);
             }
         });
+
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        restoreGeometry(settings.value(QStringLiteral("ui/geometry")).toByteArray());
+        restoreState(settings.value(QStringLiteral("ui/windowState")).toByteArray());
+        packet_table->horizontalHeader()->restoreState(
+            settings.value(QStringLiteral("ui/packetHeader")).toByteArray());
+        filter_edit->setText(settings.value(QStringLiteral("capture/lastFilter")).toString());
+        display_filter_edit_->setText(
+            settings.value(QStringLiteral("display/lastFilter")).toString());
+    }
 }
 
 main_window::~main_window() {
     capture_runner_.stop();
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("ui/geometry"), saveGeometry());
+        settings.setValue(QStringLiteral("ui/windowState"), saveState());
+        if (const auto* const table = findChild<QTableView*>(QStringLiteral("packetTable"));
+            table != nullptr) {
+            settings.setValue(
+                QStringLiteral("ui/packetHeader"),
+                table->horizontalHeader()->saveState());
+        }
+        if (const auto* const filter = findChild<QLineEdit*>(QStringLiteral("captureFilterEdit"));
+            filter != nullptr) {
+            settings.setValue(QStringLiteral("capture/lastFilter"), filter->text());
+        }
+        settings.setValue(QStringLiteral("display/lastFilter"), display_filter_edit_->text());
+    }
 }
 
 void main_window::append_packet(std::shared_ptr<const packet::packet_record> packet) {
