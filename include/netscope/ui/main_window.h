@@ -4,6 +4,7 @@
 #include "netscope/capture/packet_merger.h"
 #include "netscope/analysis/display_filter.h"
 #include "netscope/analysis/reverse_dns.h"
+#include "netscope/analysis/tcp_flow.h"
 #include "netscope/packet/packet_repository.h"
 
 #include <QMainWindow>
@@ -24,6 +25,7 @@ class QLabel;
 class QLineEdit;
 class QStandardItemModel;
 class QSpinBox;
+class QTableView;
 class QTreeWidget;
 
 namespace netscope::packet {
@@ -56,8 +58,12 @@ private:
     void drain_captured_packets(bool flush_all);
     void stop_capture();
     void apply_display_filter();
+    void refresh_flow_view();
 
     QStandardItemModel* packet_model_{nullptr};
+    QStandardItemModel* flow_model_{nullptr};
+    QTableView* flow_table_{nullptr};
+    QPlainTextEdit* flow_data_{nullptr};
     QTreeWidget* protocol_tree_{nullptr};
     QPlainTextEdit* hex_view_{nullptr};
     QComboBox* integer_width_{nullptr};
@@ -74,6 +80,7 @@ private:
     std::optional<std::size_t> current_byte_offset_;
     capture::capture_runner capture_runner_;
     analysis::reverse_dns_resolver reverse_dns_;
+    analysis::tcp_flow_tracker flow_tracker_;
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;
