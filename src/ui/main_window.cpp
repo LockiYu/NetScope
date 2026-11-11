@@ -12,6 +12,7 @@
 #include <QCompleter>
 #include <QCoreApplication>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QBrush>
 #include <QColor>
 #include <QDateTime>
@@ -576,7 +577,56 @@ main_window::main_window(
     auto* const anomaly_dock = new QDockWidget{QStringLiteral("Observations"), this};
     anomaly_dock->setObjectName(QStringLiteral("anomalyDock"));
     anomaly_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
-    auto* const anomaly_table = new QTableView{anomaly_dock};
+    auto* const anomaly_panel = new QWidget{anomaly_dock};
+    auto* const anomaly_layout = new QVBoxLayout{anomaly_panel};
+    auto* const anomaly_settings = new QFormLayout{};
+    auto* const port_scan_threshold = new QSpinBox{anomaly_panel};
+    port_scan_threshold->setObjectName(QStringLiteral("portScanThresholdSpin"));
+    port_scan_threshold->setRange(2, 65535);
+    port_scan_threshold->setValue(20);
+    auto* const port_scan_window = new QSpinBox{anomaly_panel};
+    port_scan_window->setObjectName(QStringLiteral("portScanWindowSpin"));
+    port_scan_window->setRange(1, 3600);
+    port_scan_window->setSuffix(QStringLiteral(" s"));
+    port_scan_window->setValue(10);
+    auto* const retransmission_minimum = new QSpinBox{anomaly_panel};
+    retransmission_minimum->setObjectName(QStringLiteral("retransmissionMinimumSpin"));
+    retransmission_minimum->setRange(1, 1000000);
+    retransmission_minimum->setValue(10);
+    auto* const retransmission_ratio = new QDoubleSpinBox{anomaly_panel};
+    retransmission_ratio->setObjectName(QStringLiteral("retransmissionRatioSpin"));
+    retransmission_ratio->setRange(0.0, 100.0);
+    retransmission_ratio->setSuffix(QStringLiteral(" %"));
+    retransmission_ratio->setDecimals(1);
+    retransmission_ratio->setValue(20.0);
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        port_scan_threshold->setValue(
+            settings.value(QStringLiteral("observations/portThreshold"), 20).toInt());
+        port_scan_window->setValue(
+            settings.value(QStringLiteral("observations/portWindow"), 10).toInt());
+        retransmission_minimum->setValue(
+            settings.value(QStringLiteral("observations/retransMinimum"), 10).toInt());
+        retransmission_ratio->setValue(
+            settings.value(QStringLiteral("observations/retransRatioPercent"), 20.0).toDouble());
+    }
+    anomaly_detector_ = analysis::anomaly_detector{analysis::anomaly_config{
+        static_cast<std::size_t>(port_scan_threshold->value()),
+        std::chrono::seconds{port_scan_window->value()},
+        static_cast<std::uint64_t>(retransmission_minimum->value()),
+        retransmission_ratio->value() / 100.0,
+    }};
+    anomaly_settings->addRow(QStringLiteral("Unique ports"), port_scan_threshold);
+    anomaly_settings->addRow(QStringLiteral("Scan window"), port_scan_window);
+    anomaly_settings->addRow(QStringLiteral("Minimum flow packets"), retransmission_minimum);
+    anomaly_settings->addRow(QStringLiteral("Retransmission ratio"), retransmission_ratio);
+    auto* const apply_anomaly_settings = new QPushButton{
+        QStringLiteral("Apply thresholds"), anomaly_panel};
+    apply_anomaly_settings->setObjectName(
+        QStringLiteral("applyObservationSettingsButton"));
+    anomaly_settings->addRow(apply_anomaly_settings);
+    anomaly_layout->addLayout(anomaly_settings);
+    auto* const anomaly_table = new QTableView{anomaly_panel};
     anomaly_table->setObjectName(QStringLiteral("anomalyTable"));
     anomaly_model_ = new QStandardItemModel{anomaly_table};
     anomaly_model_->setHorizontalHeaderLabels({
@@ -587,10 +637,44 @@ main_window::main_window(
     anomaly_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     anomaly_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     anomaly_table->horizontalHeader()->setStretchLastSection(true);
-    anomaly_dock->setWidget(anomaly_table);
+    anomaly_layout->addWidget(anomaly_table, 1);
+    anomaly_dock->setWidget(anomaly_panel);
     addDockWidget(Qt::BottomDockWidgetArea, anomaly_dock);
 
     statusBar()->showMessage(QStringLiteral("Ready — select one or more interfaces"));
+
+    connect(
+        apply_anomaly_settings,
+        &QPushButton::clicked,
+        this,
+        [this, port_scan_threshold, port_scan_window,
+         retransmission_minimum, retransmission_ratio] {
+            analysis::anomaly_config config;
+            config.port_scan_unique_ports = static_cast<std::size_t>(
+                port_scan_threshold->value());
+            config.port_scan_window = std::chrono::seconds{port_scan_window->value()};
+            config.retransmission_minimum_packets = static_cast<std::uint64_t>(
+                retransmission_minimum->value());
+            config.retransmission_ratio = retransmission_ratio->value() / 100.0;
+            anomaly_detector_ = analysis::anomaly_detector{config};
+            if (!QCoreApplication::organizationName().isEmpty()) {
+                QSettings settings;
+                settings.setValue(
+                    QStringLiteral("observations/portThreshold"),
+                    port_scan_threshold->value());
+                settings.setValue(
+                    QStringLiteral("observations/portWindow"),
+                    port_scan_window->value());
+                settings.setValue(
+                    QStringLiteral("observations/retransMinimum"),
+                    retransmission_minimum->value());
+                settings.setValue(
+                    QStringLiteral("observations/retransRatioPercent"),
+                    retransmission_ratio->value());
+            }
+            statusBar()->showMessage(
+                QStringLiteral("Observation thresholds updated"), 3000);
+        });
 
     connect(
         packet_table->selectionModel(),
