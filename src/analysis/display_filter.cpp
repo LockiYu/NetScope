@@ -129,6 +129,10 @@ const protocol::protocol_node* find_node(
         (protocol_name == "udp" && name == "user datagram protocol") ||
         (protocol_name == "icmp" && name == "internet control message protocol") ||
         (protocol_name == "icmpv6" && name == "internet control message protocol v6") ||
+        (protocol_name == "dns" && name == "domain name system") ||
+        (protocol_name == "dhcp" && name == "dynamic host configuration protocol") ||
+        (protocol_name == "http" && name == "hypertext transfer protocol") ||
+        (protocol_name == "tls" && name == "transport layer security") ||
         name == protocol_name;
     if (matches) {
         return &node;

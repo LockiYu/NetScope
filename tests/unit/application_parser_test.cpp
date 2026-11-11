@@ -1,8 +1,10 @@
 #include "netscope/protocol/application_parser.h"
+#include "netscope/packet/packet_repository.h"
 
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <chrono>
 #include <optional>
 #include <string>
 #include <vector>
@@ -121,6 +123,39 @@ TEST(application_parser_test, safely_declines_unknown_or_truncated_payloads) {
         netscope::packet::byte_view{bytes}, 0U, bytes.size(), 1234U, 4321U).has_value());
     EXPECT_FALSE(netscope::protocol::parse_udp_application(
         netscope::packet::byte_view{bytes}, 0U, bytes.size(), 1234U, 4321U).has_value());
+}
+
+TEST(application_parser_test, promotes_application_protocol_into_packet_summary) {
+    const std::vector<std::uint8_t> dns{
+        0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0,
+        3, 'w', 'w', 'w', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+        3, 'c', 'o', 'm', 0, 0, 1, 0, 1,
+    };
+    const auto ip_length = static_cast<std::uint16_t>(20U + 8U + dns.size());
+    const auto udp_length = static_cast<std::uint16_t>(8U + dns.size());
+    std::vector<std::uint8_t> frame{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
+        0x45, 0, static_cast<std::uint8_t>(ip_length >> 8U),
+        static_cast<std::uint8_t>(ip_length), 0, 1, 0x40, 0, 64, 17, 0, 0,
+        192, 0, 2, 1, 8, 8, 8, 8,
+        0xcf, 0x08, 0, 53, static_cast<std::uint8_t>(udp_length >> 8U),
+        static_cast<std::uint8_t>(udp_length), 0, 0,
+    };
+    frame.insert(frame.end(), dns.begin(), dns.end());
+    netscope::packet::packet_repository repository{1U};
+
+    const auto record = repository.append(netscope::capture::merged_packet{
+        netscope::capture::captured_packet{
+            std::chrono::system_clock::now(),
+            static_cast<std::uint32_t>(frame.size()),
+            static_cast<std::uint32_t>(frame.size()),
+            std::move(frame),
+        },
+        {"en0"},
+    });
+
+    EXPECT_EQ(record->protocol, "DNS");
+    EXPECT_EQ(record->information, "www.example.com");
 }
 
 }  // namespace

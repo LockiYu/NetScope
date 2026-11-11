@@ -65,6 +65,7 @@ add_library(netscope_core STATIC
     src/packet/byte_reader.cpp
     src/packet/packet_repository.cpp
     src/protocol/checksum.cpp
+    src/protocol/application_parser.cpp
     src/protocol/packet_parser.cpp
     src/protocol/protocol_model.cpp
 )
