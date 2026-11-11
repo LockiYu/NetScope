@@ -233,6 +233,18 @@ target_link_libraries(netscope_anomaly_detector_test PRIVATE
 
 gtest_discover_tests(netscope_anomaly_detector_test DISCOVERY_MODE PRE_TEST)
 
+add_executable(netscope_ip_reassembly_test
+    unit/ip_reassembly_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_ip_reassembly_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_ip_reassembly_test DISCOVERY_MODE PRE_TEST)
+
 
 
 
