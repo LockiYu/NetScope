@@ -69,8 +69,8 @@ TEST(tcp_flow_test, tracks_bidirectional_handshake_state_and_rtt) {
         repository, client, server, 50000U, 80U, 100U, 0U, 0x02U, "", base));
     const auto second = tracker.ingest(packet(
         repository, server, client, 80U, 50000U, 900U, 101U, 0x12U, "", base + 20ms));
-    tracker.ingest(packet(
-        repository, client, server, 50000U, 80U, 101U, 901U, 0x10U, "", base + 30ms));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 101U, 901U, 0x10U, "", base + 30ms)));
 
     ASSERT_TRUE(first.has_value());
     ASSERT_TRUE(second.has_value());
@@ -90,14 +90,14 @@ TEST(tcp_flow_test, reassembles_out_of_order_data_and_counts_retransmissions) {
     const std::array<std::uint8_t, 4> client{10, 0, 0, 1};
     const std::array<std::uint8_t, 4> server{10, 0, 0, 2};
 
-    tracker.ingest(packet(
-        repository, client, server, 50000U, 80U, 101U, 0U, 0x18U, "Hello ", base));
-    tracker.ingest(packet(
-        repository, client, server, 50000U, 80U, 113U, 0U, 0x18U, "World", base + 1ms));
-    tracker.ingest(packet(
-        repository, client, server, 50000U, 80U, 107U, 0U, 0x18U, "there ", base + 2ms));
-    tracker.ingest(packet(
-        repository, client, server, 50000U, 80U, 101U, 0U, 0x18U, "Hello ", base + 3ms));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 101U, 0U, 0x18U, "Hello ", base)));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 113U, 0U, 0x18U, "World", base + 1ms)));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 107U, 0U, 0x18U, "there ", base + 2ms)));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 101U, 0U, 0x18U, "Hello ", base + 3ms)));
 
     const auto flow = tracker.snapshot().front();
     EXPECT_EQ(flow.out_of_order_segments, 1U);
@@ -114,12 +114,15 @@ TEST(tcp_flow_test, tracks_fin_and_reset_terminal_states) {
     const std::array<std::uint8_t, 4> one{10, 0, 0, 1};
     const std::array<std::uint8_t, 4> two{10, 0, 0, 2};
 
-    tracker.ingest(packet(repository, one, two, 1U, 2U, 1U, 0U, 0x01U, "", base));
-    tracker.ingest(packet(repository, two, one, 2U, 1U, 1U, 2U, 0x01U, "", base + 1ms));
+    static_cast<void>(tracker.ingest(
+        packet(repository, one, two, 1U, 2U, 1U, 0U, 0x01U, "", base)));
+    static_cast<void>(tracker.ingest(
+        packet(repository, two, one, 2U, 1U, 1U, 2U, 0x01U, "", base + 1ms)));
     EXPECT_EQ(tracker.snapshot().front().state, tcp_flow_state::closed);
 
     tracker.clear();
-    tracker.ingest(packet(repository, one, two, 1U, 2U, 1U, 0U, 0x04U, "", base));
+    static_cast<void>(tracker.ingest(
+        packet(repository, one, two, 1U, 2U, 1U, 0U, 0x04U, "", base)));
     EXPECT_EQ(tracker.snapshot().front().state, tcp_flow_state::reset);
 }
 
