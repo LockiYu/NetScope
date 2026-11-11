@@ -318,6 +318,20 @@ TEST(main_window_test, updates_address_display_after_reverse_dns_without_losing_
         QStringLiteral("192.168.1.10"));
 }
 
+TEST(main_window_test, exposes_tracked_tcp_flows_in_a_dedicated_view) {
+    netscope::ui::main_window window;
+    auto* const flow_table = window.findChild<QTableView*>(QStringLiteral("tcpFlowTable"));
+    auto* const flow_data = window.findChild<QPlainTextEdit*>(QStringLiteral("tcpFlowData"));
+    ASSERT_NE(flow_table, nullptr);
+    ASSERT_NE(flow_data, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+
+    ASSERT_EQ(flow_table->model()->rowCount(), 1);
+    EXPECT_TRUE(flow_table->model()->index(0, 1).data().toString().contains("192.168.1.10"));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
