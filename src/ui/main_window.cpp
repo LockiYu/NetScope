@@ -36,6 +36,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QChart>
+#include <QChartView>
+#include <QPieSeries>
 
 #include <exception>
 #include <chrono>
@@ -489,6 +492,38 @@ main_window::main_window(
     flow_dock->setWidget(flow_panel);
     addDockWidget(Qt::BottomDockWidgetArea, flow_dock);
 
+    auto* const statistics_dock = new QDockWidget{QStringLiteral("Traffic Statistics"), this};
+    statistics_dock->setObjectName(QStringLiteral("statisticsDock"));
+    statistics_dock->setAllowedAreas(Qt::RightDockWidgetArea | Qt::BottomDockWidgetArea);
+    auto* const statistics_panel = new QWidget{statistics_dock};
+    auto* const statistics_layout = new QVBoxLayout{statistics_panel};
+    statistics_packet_count_ = new QLabel{QStringLiteral("Packets: 0"), statistics_panel};
+    statistics_packet_count_->setObjectName(QStringLiteral("statisticsPacketCount"));
+    statistics_byte_count_ = new QLabel{QStringLiteral("Bytes: 0"), statistics_panel};
+    statistics_byte_count_->setObjectName(QStringLiteral("statisticsByteCount"));
+    statistics_rate_ = new QLabel{QStringLiteral("Rate: 0 packets/s, 0 B/s"), statistics_panel};
+    statistics_rate_->setObjectName(QStringLiteral("statisticsRate"));
+    statistics_layout->addWidget(statistics_packet_count_);
+    statistics_layout->addWidget(statistics_byte_count_);
+    statistics_layout->addWidget(statistics_rate_);
+    protocol_series_ = new QPieSeries{statistics_panel};
+    auto* const protocol_chart = new QChart{};
+    protocol_chart->addSeries(protocol_series_);
+    protocol_chart->setTitle(QStringLiteral("Protocol distribution"));
+    protocol_chart->legend()->setVisible(true);
+    auto* const protocol_chart_view = new QChartView{protocol_chart, statistics_panel};
+    protocol_chart_view->setObjectName(QStringLiteral("protocolChart"));
+    protocol_chart_view->setRenderHint(QPainter::Antialiasing);
+    protocol_chart_view->setMinimumHeight(180);
+    statistics_layout->addWidget(protocol_chart_view);
+    statistics_top_ = new QPlainTextEdit{statistics_panel};
+    statistics_top_->setObjectName(QStringLiteral("statisticsTop"));
+    statistics_top_->setReadOnly(true);
+    statistics_top_->setMaximumHeight(160);
+    statistics_layout->addWidget(statistics_top_);
+    statistics_dock->setWidget(statistics_panel);
+    addDockWidget(Qt::RightDockWidgetArea, statistics_dock);
+
     statusBar()->showMessage(QStringLiteral("Ready — select one or more interfaces"));
 
     connect(
@@ -796,6 +831,8 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     if (flow_tracker_.ingest(packets_.back()).has_value()) {
         refresh_flow_view();
     }
+    statistics_.ingest(packets_.back());
+    refresh_statistics_view();
 
     const auto resolve_address = [this, stored_index](
                                      const std::string& address,
@@ -855,8 +892,10 @@ void main_window::load_pcap(const std::filesystem::path& path) {
 
     repository_.clear();
     flow_tracker_.clear();
+    statistics_.clear();
     flow_model_->removeRows(0, flow_model_->rowCount());
     flow_data_->clear();
+    refresh_statistics_view();
     packet_model_->removeRows(0, packet_model_->rowCount());
     packets_.clear();
     protocol_tree_->clear();
@@ -1088,6 +1127,50 @@ void main_window::refresh_flow_view() {
         flow_model_->appendRow(row);
     }
     flow_table_->setSortingEnabled(sorting);
+}
+
+void main_window::refresh_statistics_view() {
+    const auto snapshot = statistics_.snapshot();
+    statistics_packet_count_->setText(
+        QStringLiteral("Packets: %1").arg(static_cast<qulonglong>(snapshot.total_packets)));
+    statistics_byte_count_->setText(
+        QStringLiteral("Bytes: %1").arg(static_cast<qulonglong>(snapshot.total_bytes)));
+    statistics_rate_->setText(
+        QStringLiteral("Rate: %1 packets/s, %2 B/s")
+            .arg(snapshot.packet_rate, 0, 'f', 1)
+            .arg(snapshot.byte_rate, 0, 'f', 1));
+    protocol_series_->clear();
+    for (const auto& [protocol, count] : snapshot.protocol_counts) {
+        protocol_series_->append(
+            QStringLiteral("%1 (%2)")
+                .arg(QString::fromStdString(protocol))
+                .arg(static_cast<qulonglong>(count)),
+            static_cast<qreal>(count));
+    }
+
+    std::vector<std::pair<std::string, std::uint64_t>> hosts{
+        snapshot.host_counts.begin(), snapshot.host_counts.end()};
+    std::sort(hosts.begin(), hosts.end(), [](const auto& left, const auto& right) {
+        return left.second > right.second;
+    });
+    QString summary{QStringLiteral("Top hosts\n")};
+    for (std::size_t index = 0U; index < std::min(hosts.size(), std::size_t{5U}); ++index) {
+        summary += QStringLiteral("%1  %2\n")
+            .arg(QString::fromStdString(hosts[index].first))
+            .arg(static_cast<qulonglong>(hosts[index].second));
+    }
+    summary += QStringLiteral("\nTop ports\n");
+    std::vector<std::pair<std::uint16_t, std::uint64_t>> ports{
+        snapshot.port_counts.begin(), snapshot.port_counts.end()};
+    std::sort(ports.begin(), ports.end(), [](const auto& left, const auto& right) {
+        return left.second > right.second;
+    });
+    for (std::size_t index = 0U; index < std::min(ports.size(), std::size_t{5U}); ++index) {
+        summary += QStringLiteral("%1  %2\n")
+            .arg(ports[index].first)
+            .arg(static_cast<qulonglong>(ports[index].second));
+    }
+    statistics_top_->setPlainText(summary);
 }
 
 }  // namespace netscope::ui

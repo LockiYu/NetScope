@@ -5,6 +5,7 @@
 #include "netscope/analysis/display_filter.h"
 #include "netscope/analysis/reverse_dns.h"
 #include "netscope/analysis/tcp_flow.h"
+#include "netscope/analysis/traffic_statistics.h"
 #include "netscope/packet/packet_repository.h"
 
 #include <QMainWindow>
@@ -22,6 +23,7 @@ class QPlainTextEdit;
 class QAction;
 class QComboBox;
 class QLabel;
+class QPieSeries;
 class QLineEdit;
 class QStandardItemModel;
 class QSpinBox;
@@ -59,11 +61,17 @@ private:
     void stop_capture();
     void apply_display_filter();
     void refresh_flow_view();
+    void refresh_statistics_view();
 
     QStandardItemModel* packet_model_{nullptr};
     QStandardItemModel* flow_model_{nullptr};
     QTableView* flow_table_{nullptr};
     QPlainTextEdit* flow_data_{nullptr};
+    QLabel* statistics_packet_count_{nullptr};
+    QLabel* statistics_byte_count_{nullptr};
+    QLabel* statistics_rate_{nullptr};
+    QPieSeries* protocol_series_{nullptr};
+    QPlainTextEdit* statistics_top_{nullptr};
     QTreeWidget* protocol_tree_{nullptr};
     QPlainTextEdit* hex_view_{nullptr};
     QComboBox* integer_width_{nullptr};
@@ -81,6 +89,7 @@ private:
     capture::capture_runner capture_runner_;
     analysis::reverse_dns_resolver reverse_dns_;
     analysis::tcp_flow_tracker flow_tracker_;
+    analysis::traffic_statistics statistics_;
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;
