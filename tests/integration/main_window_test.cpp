@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QLabel>
 #include <QLineEdit>
@@ -398,6 +399,20 @@ TEST(main_window_test, lists_explainable_anomaly_observations) {
 
     ASSERT_EQ(alerts->model()->rowCount(), 1);
     EXPECT_TRUE(alerts->model()->index(0, 2).data().toString().contains("truncated"));
+}
+
+TEST(main_window_test, provides_configurable_observation_thresholds) {
+    netscope::ui::main_window window;
+
+    EXPECT_NE(
+        window.findChild<QSpinBox*>(QStringLiteral("portScanThresholdSpin")),
+        nullptr);
+    EXPECT_NE(
+        window.findChild<QDoubleSpinBox*>(QStringLiteral("retransmissionRatioSpin")),
+        nullptr);
+    EXPECT_NE(
+        window.findChild<QPushButton*>(QStringLiteral("applyObservationSettingsButton")),
+        nullptr);
 }
 
 TEST(main_window_test, marks_and_annotates_packets_without_changing_capture_data) {
