@@ -2,6 +2,10 @@
 
 NetScope is an independent macOS packet sniffer and protocol analyzer for UCAS Software and System Security Experiment 1A. It uses libpcap for capture and Qt 6 for the native desktop interface; it does not invoke Wireshark or tshark.
 
+- Student: 于豪杰
+- Student ID: 202628015059027
+- Repository: https://github.com/LockiYu/NetScope
+
 ## Features
 
 - Live capture from one or more interfaces with selectable snapshot length, pause, resume, stop, kernel BPF filtering, packet merge, and duplicate suppression.
@@ -27,7 +31,14 @@ The application bundle is generated at `build/NetScope.app`.
 
 ## Capture permission
 
-macOS protects `/dev/bpf*`. The recommended persistent setup is to install Wireshark's `ChmodBPF` launch daemon, which grants the logged-in user access to BPF devices. This only supplies device permissions; NetScope remains an independent implementation and does not call Wireshark. After installing the helper, sign out and back in, then start NetScope normally.
+macOS protects `/dev/bpf*`. NetScope does not require Wireshark's permission helper. For temporary access that lasts until the BPF devices are recreated or the machine restarts, run the following commands immediately before starting NetScope:
+
+```sh
+sudo chown "$USER":admin /dev/bpf*
+sudo chmod 660 /dev/bpf*
+```
+
+These commands only change the currently existing BPF device permissions and do not install a launch daemon or create a startup item.
 
 If opening an interface fails, verify that a `/dev/bpf*` device is readable by the current user. Loopback (`lo0`) is useful for a controlled local test. Tunnel and VPN interfaces are shown but excluded from the default selection; physical active interfaces are selected by default when available.
 

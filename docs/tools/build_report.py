@@ -10,7 +10,10 @@ from docx.shared import Inches, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT = ROOT / "docs" / "NetScope_Experiment_1A_Report.docx"
+STUDENT_NAME = "于豪杰"
+STUDENT_ID = "202628015059027"
+REPOSITORY_URL = "https://github.com/LockiYu/NetScope"
+OUTPUT = ROOT / "docs" / f"{STUDENT_NAME}_{STUDENT_ID}_ex1A_report.docx"
 
 
 def set_run_font(run, name="Arial Unicode MS", size=11, bold=False):
@@ -167,6 +170,7 @@ summary.paragraph_format.line_spacing = 1.5
 set_run_font(summary.add_run(
     "独立实现的 macOS 图形化 NPS 与 NPA\n"
     "C++17 · Qt 6 · libpcap\n"
+    f"姓名：{STUDENT_NAME}    学号：{STUDENT_ID}\n"
     "2026 年 11 月"), size=13)
 
 doc.add_page_break()
@@ -177,6 +181,7 @@ add_body(doc, "关键词：网络嗅探；libpcap；BPF；协议解析；TCP 流
 
 add_heading(doc, "1 实验目标与项目定位")
 add_body(doc, "实验 1A 的核心是实现带图形界面的网络嗅探器，必须具备 NPS 能力，并尽量完善 NPA 能力。NetScope 的定位不是封装或调用 Wireshark，而是从抓包、解析、流状态到交互展示全链路独立实现。这一定位既能展示对 OSI 层次、内核抓包和协议状态的理解，也使每个安全边界和失败模式可被测试。")
+add_body(doc, f"学生：{STUDENT_NAME}（学号 {STUDENT_ID}）。项目开源仓库：{REPOSITORY_URL}。")
 add_table(doc, ["要求", "实现", "验收依据"], [
     ("GUI", "Qt 6 原生桌面界面，包列表、协议树、Hex 视图与可停靠分析面板", "离线 UI 集成测试"),
     ("NPS", "libpcap 实时抓包，支持多网卡、暂停、继续、停止和丢包统计", "后端会话与抓包运行器测试"),
@@ -258,7 +263,7 @@ set_run_font(code.add_run(
     "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release\n"
     "cmake --build build -j\n"
     "open build/NetScope.app"), name="Menlo", size=9.5)
-add_body(doc, "macOS 默认保护 dev bpf 设备。持久方案是安装 Wireshark 发布包中的 ChmodBPF 启动守护程，它仅调整 BPF 设备组权限，NetScope 仍是独立实现且不调用 Wireshark。安装后重新登录，以普通用户运行。若无权限，界面会保留可读错误而不崩溃。")
+add_body(doc, "macOS 默认保护 dev bpf 设备。本项目不安装 Wireshark ChmodBPF 或任何开机启动项，而是在演示前使用 sudo chown 和 sudo chmod 临时授予当前用户读写现有 BPF 设备的权限。设备重建或系统重启后该修改会失效，不形成持久权限。若无权限，界面会保留可读错误而不崩溃。")
 
 add_heading(doc, "11 演示与验收建议")
 add_table(doc, ["顺序", "操作", "展示要点"], [
@@ -285,7 +290,7 @@ for paragraph in doc.paragraphs:
 
 doc.core_properties.title = "NetScope 网络嗅探器设计与实现"
 doc.core_properties.subject = "软件与系统安全实验 1A 技术报告"
-doc.core_properties.author = "NetScope Project"
+doc.core_properties.author = STUDENT_NAME
 doc.core_properties.keywords = "libpcap, Qt, packet sniffer, protocol analyzer"
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
 doc.save(OUTPUT)
