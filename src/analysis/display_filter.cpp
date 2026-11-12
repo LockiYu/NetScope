@@ -175,6 +175,12 @@ std::vector<std::string> resolve_values(
     const std::string& identifier) {
     const auto dot = identifier.find('.');
     if (dot == std::string::npos) {
+        if (identifier == "process" || identifier == "proc") {
+            if (!packet.process.has_value()) {
+                return {};
+            }
+            return {packet.process->name, std::to_string(packet.process->pid)};
+        }
         return {};
     }
     const auto prefix = lowercase(identifier.substr(0U, dot));
@@ -187,6 +193,14 @@ std::vector<std::string> resolve_values(
     }
     if (prefix == "protocol") {
         return {packet.protocol};
+    }
+    if ((prefix == "process" || prefix == "proc") && packet.process.has_value()) {
+        if (suffix == "name") {
+            return {packet.process->name};
+        }
+        if (suffix == "pid") {
+            return {std::to_string(packet.process->pid)};
+        }
     }
     if ((prefix == "ip" || prefix == "ipv4" || prefix == "ipv6") && suffix == "src") {
         return {packet.source};
@@ -212,6 +226,9 @@ std::vector<std::string> resolve_values(
 bool protocol_present(const packet::packet_record& packet, const std::string& identifier) {
     if (identifier == "protocol") {
         return !packet.protocol.empty();
+    }
+    if (identifier == "process" || identifier == "proc") {
+        return packet.process.has_value();
     }
     return find_node(packet.analysis, lowercase(identifier)) != nullptr;
 }

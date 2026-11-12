@@ -76,6 +76,24 @@ std::shared_ptr<const netscope::packet::packet_record> make_record() {
     });
 }
 
+std::shared_ptr<const netscope::packet::packet_record> make_owned_record(
+    const std::string& name,
+    const std::int32_t pid) {
+    auto bytes = sample_bytes();
+    netscope::packet::packet_repository repository{1};
+    return repository.append(
+        netscope::capture::merged_packet{
+            netscope::capture::captured_packet{
+                std::chrono::system_clock::time_point{std::chrono::microseconds{1000002}},
+                static_cast<std::uint32_t>(bytes.size()),
+                static_cast<std::uint32_t>(bytes.size()),
+                std::move(bytes),
+            },
+            {"en0"},
+        },
+        netscope::packet::process_owner{name, pid});
+}
+
 std::shared_ptr<const netscope::packet::packet_record> make_fragment(
     netscope::packet::packet_repository& repository,
     const std::uint16_t offset_units,
@@ -166,6 +184,36 @@ TEST(main_window_test, provides_capture_controls_and_multi_interface_selection) 
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("startCaptureAction")), nullptr);
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("pauseCaptureAction")), nullptr);
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("stopCaptureAction")), nullptr);
+}
+
+TEST(main_window_test, shows_process_attribution_and_filters_flows_by_process) {
+    netscope::ui::main_window window;
+    auto* const packet_table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const flow_table = window.findChild<QTableView*>(QStringLiteral("tcpFlowTable"));
+    auto* const process_filter = window.findChild<QComboBox*>(QStringLiteral("flowProcessFilter"));
+    ASSERT_NE(packet_table, nullptr);
+    ASSERT_NE(flow_table, nullptr);
+    ASSERT_NE(process_filter, nullptr);
+
+    window.append_packet(make_owned_record("Safari", 99));
+    window.append_packet(make_owned_record("Safari", 99));
+    QApplication::processEvents();
+
+    ASSERT_EQ(packet_table->model()->rowCount(), 2);
+    const auto process_header = packet_table->model()->headerData(
+        3, Qt::Horizontal).toString();
+    EXPECT_EQ(process_header, QStringLiteral("Process"));
+    EXPECT_EQ(
+        packet_table->model()->index(0, 3).data().toString(),
+        QStringLiteral("Safari (99)"));
+    EXPECT_GE(flow_table->model()->rowCount(), 1);
+    EXPECT_EQ(flow_table->model()->columnCount(), 10);
+    EXPECT_EQ(process_filter->currentText(), QStringLiteral("All processes"));
+    EXPECT_GT(process_filter->findText(QStringLiteral("Safari")), 0);
+
+    process_filter->setCurrentIndex(process_filter->findText(QStringLiteral("Safari")));
+    QApplication::processEvents();
+    EXPECT_EQ(flow_table->model()->rowCount(), 1);
 }
 
 TEST(main_window_test, updates_protocol_and_hex_views_for_selected_packet) {
@@ -343,15 +391,15 @@ TEST(main_window_test, updates_address_display_after_reverse_dns_without_losing_
     window.append_packet(make_record());
 
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
-    while (!table->model()->index(0, 3).data().toString().contains("client.example") &&
+    while (!table->model()->index(0, 4).data().toString().contains("client.example") &&
            std::chrono::steady_clock::now() < deadline) {
         QApplication::processEvents();
         std::this_thread::sleep_for(std::chrono::milliseconds{2});
     }
 
-    EXPECT_TRUE(table->model()->index(0, 3).data().toString().contains("client.example"));
+    EXPECT_TRUE(table->model()->index(0, 4).data().toString().contains("client.example"));
     EXPECT_EQ(
-        table->model()->index(0, 3).data(Qt::UserRole + 3).toString(),
+        table->model()->index(0, 4).data(Qt::UserRole + 3).toString(),
         QStringLiteral("192.168.1.10"));
 }
 

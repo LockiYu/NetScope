@@ -5,6 +5,7 @@
 #include "netscope/analysis/display_filter.h"
 #include "netscope/analysis/anomaly_detector.h"
 #include "netscope/analysis/ip_reassembly.h"
+#include "netscope/analysis/process_tracker.h"
 #include "netscope/analysis/reverse_dns.h"
 #include "netscope/analysis/tcp_flow.h"
 #include "netscope/analysis/traffic_statistics.h"
@@ -14,13 +15,16 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 class QPlainTextEdit;
@@ -50,6 +54,11 @@ public:
         capture::capture_runner::opener opener,
         analysis::reverse_dns_resolver::lookup dns_lookup,
         QWidget* parent = nullptr);
+    main_window(
+        capture::capture_runner::opener opener,
+        analysis::reverse_dns_resolver::lookup dns_lookup,
+        analysis::process_tracker::snapshot_provider process_provider,
+        QWidget* parent = nullptr);
     ~main_window() override;
 
     void append_packet(std::shared_ptr<const packet::packet_record> packet);
@@ -74,11 +83,15 @@ private:
     void stop_capture();
     void apply_display_filter();
     void refresh_flow_view();
+    void refresh_flow_process_filter();
     void refresh_statistics_view();
+    void start_process_refresh();
+    void stop_process_refresh();
 
     QStandardItemModel* packet_model_{nullptr};
     QStandardItemModel* flow_model_{nullptr};
     QStandardItemModel* anomaly_model_{nullptr};
+    QComboBox* flow_process_filter_{nullptr};
     QTableView* flow_table_{nullptr};
     QPlainTextEdit* flow_data_{nullptr};
     QLabel* statistics_packet_count_{nullptr};
@@ -106,6 +119,13 @@ private:
     analysis::traffic_statistics statistics_;
     analysis::anomaly_detector anomaly_detector_;
     analysis::ip_reassembler ip_reassembler_;
+    analysis::process_tracker process_tracker_;
+    std::map<std::uint64_t, packet::process_owner> flow_process_;
+    std::set<std::string> known_process_names_;
+    std::thread process_worker_;
+    std::mutex process_worker_mutex_;
+    std::condition_variable process_worker_cv_;
+    std::atomic<bool> process_worker_stop_{false};
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;
