@@ -30,6 +30,13 @@ cmake --build build -j
 
 The application bundle is generated at `build/NetScope.app`.
 
+If CMake resolves a GoogleTest package whose libraries do not match (for example a stale Anaconda installation that appears earlier on `PATH`), point it at the Homebrew package explicitly:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DGTest_DIR="$(brew --prefix googletest)/lib/cmake/GTest"
+```
+
 Report screenshots are reproduced deterministically with the optional documentation tool:
 
 ```sh
