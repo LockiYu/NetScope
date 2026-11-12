@@ -2,8 +2,6 @@
 
 NetScope is an independent macOS packet sniffer and protocol analyzer for UCAS Software and System Security Experiment 1A. It uses libpcap for capture and Qt 6 for the native desktop interface; it does not invoke Wireshark or tshark.
 
-- Student: 于豪杰
-- Student ID: 202628015059027
 - Repository: https://github.com/LockiYu/NetScope
 
 ## Features
