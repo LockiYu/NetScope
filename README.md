@@ -11,9 +11,12 @@ NetScope is an independent macOS packet sniffer and protocol analyzer for UCAS S
 - Ethernet II, stacked VLAN, ARP, IPv4, IPv6 extension headers, TCP, UDP, ICMP, ICMPv6, DNS, DHCP, HTTP metadata, and TLS ClientHello metadata parsing.
 - Display-filter expressions with logical operators and field comparisons, reverse DNS, protocol colors, marks, notes, byte search, byte-range synchronization, and integer inspection.
 - IPv4 and IPv6 fragment reassembly, TCP flow tracking and stream reassembly, RTT and retransmission metrics, timing charts, traffic statistics, explainable observations, and configurable thresholds.
+- Process attribution for live capture: libproc maps TCP/UDP five-tuples to the owning process, the packet and flow views show it, flows can be filtered by process, and `process`/`proc` fields work in display filters.
 - PCAP open/save, filtered-packet export, TCP-flow export, protocol-tree JSON export, and two-packet field comparison.
 
 Capture uses libpcap directly at the data-link layer. It neither reads nor uses HTTP, HTTPS, or SOCKS proxy settings, so local proxy configuration cannot redirect captured traffic or application network access. Reverse DNS uses the operating system resolver and otherwise follows the machine's normal network configuration.
+
+Process attribution relies on macOS `libproc` and is refreshed from a background thread every five seconds. It only covers processes readable by the current user (SIP-protected and other users' processes are skipped), it applies to live capture only, and it is never written into exported PCAP or JSON files.
 
 ## Build on macOS
 
@@ -26,6 +29,14 @@ cmake --build build -j
 ```
 
 The application bundle is generated at `build/NetScope.app`.
+
+Report screenshots are reproduced deterministically with the optional documentation tool:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNETSCOPE_BUILD_DOCS_TOOLS=ON
+cmake --build build -j
+QT_QPA_PLATFORM=offscreen ./build/netscope_screenshots docs/figures
+```
 
 ## Capture permission
 

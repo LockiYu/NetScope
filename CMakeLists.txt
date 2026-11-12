@@ -13,6 +13,7 @@ option(NETSCOPE_ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(NETSCOPE_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer" OFF)
 option(NETSCOPE_ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(NETSCOPE_ENABLE_COVERAGE "Enable Clang source coverage" OFF)
+option(NETSCOPE_BUILD_DOCS_TOOLS "Build report screenshot tool" OFF)
 
 if(NETSCOPE_ENABLE_ASAN AND NETSCOPE_ENABLE_TSAN)
     message(FATAL_ERROR "ASan and TSan cannot be enabled together")
@@ -115,6 +116,11 @@ set_target_properties(netscope_app PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
+
+if(NETSCOPE_BUILD_DOCS_TOOLS)
+    add_executable(netscope_screenshots tools/screenshots/main.cpp)
+    target_link_libraries(netscope_screenshots PRIVATE netscope_ui)
+endif()
 
 if(NETSCOPE_BUILD_TESTS)
     enable_testing()
