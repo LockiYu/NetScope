@@ -109,6 +109,22 @@ QString absolute_time(
         .toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
+QString owner_text(const netscope::packet::process_owner& owner) {
+    if (owner.name.empty()) {
+        return QStringLiteral("pid %1").arg(owner.pid);
+    }
+    return QStringLiteral("%1 (%2)")
+        .arg(QString::fromStdString(owner.name))
+        .arg(owner.pid);
+}
+
+QString process_text(const netscope::packet::packet_record& record) {
+    if (!record.process.has_value()) {
+        return {};
+    }
+    return owner_text(record.process.value());
+}
+
 QString flow_state_name(const netscope::analysis::tcp_flow_state state) {
     switch (state) {
     case netscope::analysis::tcp_flow_state::opening: return QStringLiteral("Opening");
@@ -287,9 +303,21 @@ main_window::main_window(
     capture::capture_runner::opener opener,
     analysis::reverse_dns_resolver::lookup dns_lookup,
     QWidget* parent)
+    : main_window{
+          std::move(opener),
+          std::move(dns_lookup),
+          analysis::process_tracker::snapshot_provider{},
+          parent} {}
+
+main_window::main_window(
+    capture::capture_runner::opener opener,
+    analysis::reverse_dns_resolver::lookup dns_lookup,
+    analysis::process_tracker::snapshot_provider process_provider,
+    QWidget* parent)
     : QMainWindow{parent},
       capture_runner_{std::move(opener)},
-      reverse_dns_{std::move(dns_lookup)} {
+      reverse_dns_{std::move(dns_lookup)},
+      process_tracker_{std::move(process_provider)} {
     setWindowTitle(QStringLiteral("NetScope"));
     setMinimumSize(960, 640);
 
@@ -378,6 +406,7 @@ main_window::main_window(
         QStringLiteral("No."),
         QStringLiteral("Time"),
         QStringLiteral("Interface"),
+        QStringLiteral("Process"),
         QStringLiteral("Source"),
         QStringLiteral("Source Port"),
         QStringLiteral("Destination"),
@@ -518,14 +547,29 @@ main_window::main_window(
     auto* const flow_dock = new QDockWidget{QStringLiteral("TCP Flows"), this};
     flow_dock->setObjectName(QStringLiteral("tcpFlowDock"));
     flow_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea);
-    auto* const flow_panel = new QSplitter{Qt::Vertical, flow_dock};
+    auto* const flow_container = new QWidget{flow_dock};
+    auto* const flow_container_layout = new QVBoxLayout{flow_container};
+    flow_container_layout->setContentsMargins(0, 0, 0, 0);
+    auto* const flow_filter_row = new QHBoxLayout{};
+    flow_filter_row->setContentsMargins(6, 4, 6, 0);
+    flow_filter_row->addWidget(new QLabel{QStringLiteral("Process:"), flow_container});
+    flow_process_filter_ = new QComboBox{flow_container};
+    flow_process_filter_->setObjectName(QStringLiteral("flowProcessFilter"));
+    flow_process_filter_->setMinimumWidth(220);
+    flow_process_filter_->addItem(QStringLiteral("All processes"));
+    flow_filter_row->addWidget(flow_process_filter_);
+    flow_filter_row->addStretch();
+    flow_container_layout->addLayout(flow_filter_row);
+    auto* const flow_panel = new QSplitter{Qt::Vertical, flow_container};
+    flow_container_layout->addWidget(flow_panel);
     flow_table_ = new QTableView{flow_panel};
     flow_table_->setObjectName(QStringLiteral("tcpFlowTable"));
     flow_model_ = new QStandardItemModel{flow_table_};
     flow_model_->setHorizontalHeaderLabels({
         QStringLiteral("ID"), QStringLiteral("Client"), QStringLiteral("Server"),
-        QStringLiteral("State"), QStringLiteral("Packets"), QStringLiteral("Bytes"),
-        QStringLiteral("RTT"), QStringLiteral("Retrans"), QStringLiteral("Out-of-order"),
+        QStringLiteral("Process"), QStringLiteral("State"), QStringLiteral("Packets"),
+        QStringLiteral("Bytes"), QStringLiteral("RTT"), QStringLiteral("Retrans"),
+        QStringLiteral("Out-of-order"),
     });
     flow_table_->setModel(flow_model_);
     flow_table_->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -550,8 +594,13 @@ main_window::main_window(
     flow_data_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     flow_data_->setPlaceholderText(QStringLiteral("Select a TCP flow to inspect reassembled data."));
     flow_panel->setSizes({180, 150, 120});
-    flow_dock->setWidget(flow_panel);
+    flow_dock->setWidget(flow_container);
     addDockWidget(Qt::BottomDockWidgetArea, flow_dock);
+    connect(
+        flow_process_filter_,
+        &QComboBox::currentIndexChanged,
+        this,
+        [this] { refresh_flow_view(); });
 
     auto* const statistics_dock = new QDockWidget{QStringLiteral("Traffic Statistics"), this};
     statistics_dock->setObjectName(QStringLiteral("statisticsDock"));
@@ -1034,6 +1083,7 @@ main_window::main_window(
                         },
                         Qt::QueuedConnection);
                 });
+            start_process_refresh();
             start_action_->setEnabled(false);
             pause_action_->setEnabled(true);
             stop_action_->setEnabled(true);
@@ -1250,7 +1300,40 @@ main_window::main_window(
     }
 }
 
+void main_window::start_process_refresh() {
+    if (process_worker_.joinable()) {
+        return;
+    }
+    process_worker_stop_.store(false);
+    process_worker_ = std::thread{[this] {
+        while (!process_worker_stop_.load()) {
+            process_tracker_.refresh();
+            if (process_worker_stop_.load()) {
+                break;
+            }
+            QMetaObject::invokeMethod(
+                this,
+                [this] { refresh_flow_view(); },
+                Qt::QueuedConnection);
+            std::unique_lock<std::mutex> lock{process_worker_mutex_};
+            process_worker_cv_.wait_for(
+                lock,
+                std::chrono::seconds{5},
+                [this] { return process_worker_stop_.load(); });
+        }
+    }};
+}
+
+void main_window::stop_process_refresh() {
+    process_worker_stop_.store(true);
+    process_worker_cv_.notify_all();
+    if (process_worker_.joinable()) {
+        process_worker_.join();
+    }
+}
+
 main_window::~main_window() {
+    stop_process_refresh();
     capture_runner_.stop();
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings settings;
@@ -1286,6 +1369,7 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         new QStandardItem{QString::number(record.number)},
         new QStandardItem{absolute_time(record.capture.packet.timestamp)},
         new QStandardItem{interfaces.join(QStringLiteral(", "))},
+        new QStandardItem{process_text(record)},
         new address_item{QString::fromStdString(record.source)},
         new QStandardItem{},
         new address_item{QString::fromStdString(record.destination)},
@@ -1300,10 +1384,14 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         item->setBackground(background);
         item->setData(static_cast<qulonglong>(stored_index), Qt::UserRole);
     }
-    row[3]->setData(QString::fromStdString(record.source), Qt::UserRole + 3);
-    row[5]->setData(QString::fromStdString(record.destination), Qt::UserRole + 3);
+    row[4]->setData(QString::fromStdString(record.source), Qt::UserRole + 3);
+    row[6]->setData(QString::fromStdString(record.destination), Qt::UserRole + 3);
     packet_model_->appendRow(row);
-    if (flow_tracker_.ingest(packets_.back()).has_value()) {
+    if (const auto flow_id = flow_tracker_.ingest(packets_.back());
+        flow_id.has_value()) {
+        if (record.process.has_value()) {
+            flow_process_[flow_id.value()] = record.process.value();
+        }
         refresh_flow_view();
     }
     if (const auto datagram = ip_reassembler_.ingest(packets_.back());
@@ -1391,8 +1479,8 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
                     Qt::QueuedConnection);
             });
     };
-    resolve_address(record.source, 3);
-    resolve_address(record.destination, 5);
+    resolve_address(record.source, 4);
+    resolve_address(record.destination, 6);
     if (display_filter_.has_value()) {
         apply_display_filter();
     }
@@ -1415,6 +1503,13 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     anomaly_detector_.clear();
     ip_reassembler_.clear();
     annotations_.clear();
+    flow_process_.clear();
+    known_process_names_.clear();
+    {
+        const QSignalBlocker blocker{flow_process_filter_};
+        flow_process_filter_->clear();
+        flow_process_filter_->addItem(QStringLiteral("All processes"), QString{});
+    }
     flow_model_->removeRows(0, flow_model_->rowCount());
     flow_data_->clear();
     anomaly_model_->removeRows(0, anomaly_model_->rowCount());
@@ -1656,7 +1751,8 @@ void main_window::drain_captured_packets(const bool flush_all) {
         ready = packet_merger_.drain_ready(latest_capture_time_.value());
     }
     for (auto& packet : ready) {
-        append_packet(repository_.append(std::move(packet)));
+        const auto owner = process_tracker_.lookup(packet.packet);
+        append_packet(repository_.append(std::move(packet), owner));
     }
     if (!flush_all && packet_merger_.pending_count() != 0U &&
         !merge_flush_scheduled_) {
@@ -1669,6 +1765,7 @@ void main_window::drain_captured_packets(const bool flush_all) {
 }
 
 void main_window::stop_capture() {
+    stop_process_refresh();
     capture_runner_.stop();
     drain_captured_packets(true);
     start_action_->setEnabled(true);
@@ -1715,10 +1812,23 @@ void main_window::apply_display_filter() {
 }
 
 void main_window::refresh_flow_view() {
+    refresh_flow_process_filter();
     const bool sorting = flow_table_->isSortingEnabled();
     flow_table_->setSortingEnabled(false);
     flow_model_->removeRows(0, flow_model_->rowCount());
+    const auto selected = flow_process_filter_->currentData().toString();
     for (const auto& flow : flow_tracker_.snapshot()) {
+        const auto process = flow_process_.find(flow.id);
+        QString process_label;
+        if (process != flow_process_.end()) {
+            process_label = owner_text(process->second);
+            if (!selected.isEmpty() &&
+                QString::fromStdString(process->second.name) != selected) {
+                continue;
+            }
+        } else if (!selected.isEmpty()) {
+            continue;
+        }
         const auto rtt = flow.round_trip_time.has_value()
             ? QStringLiteral("%1 ms").arg(
                   static_cast<double>(flow.round_trip_time->count()) / 1000.0,
@@ -1730,6 +1840,7 @@ void main_window::refresh_flow_view() {
             new QStandardItem{QString::number(flow.id)},
             new QStandardItem{endpoint_text(flow.client)},
             new QStandardItem{endpoint_text(flow.server)},
+            new QStandardItem{process_label},
             new QStandardItem{flow_state_name(flow.state)},
             new QStandardItem{QString::number(flow.packet_count)},
             new QStandardItem{QString::number(flow.byte_count)},
@@ -1744,6 +1855,30 @@ void main_window::refresh_flow_view() {
         flow_model_->appendRow(row);
     }
     flow_table_->setSortingEnabled(sorting);
+}
+
+void main_window::refresh_flow_process_filter() {
+    std::set<std::string> names;
+    for (const auto& entry : flow_process_) {
+        if (!entry.second.name.empty()) {
+            names.insert(entry.second.name);
+        }
+    }
+    if (names == known_process_names_) {
+        return;
+    }
+    known_process_names_ = names;
+    const auto current = flow_process_filter_->currentData().toString();
+    const QSignalBlocker blocker{flow_process_filter_};
+    flow_process_filter_->clear();
+    flow_process_filter_->addItem(QStringLiteral("All processes"), QString{});
+    for (const auto& name : names) {
+        flow_process_filter_->addItem(
+            QString::fromStdString(name),
+            QString::fromStdString(name));
+    }
+    const auto index = flow_process_filter_->findData(current);
+    flow_process_filter_->setCurrentIndex(index < 0 ? 0 : index);
 }
 
 void main_window::refresh_statistics_view() {

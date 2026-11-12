@@ -119,11 +119,13 @@ packet_repository::packet_repository(const std::size_t capacity) : capacity_{cap
 }
 
 std::shared_ptr<const packet_record> packet_repository::append(
-    capture::merged_packet packet) {
+    capture::merged_packet packet,
+    std::optional<process_owner> process) {
     auto record = std::make_shared<packet_record>();
     record->capture = std::move(packet);
     record->analysis = protocol::parse_ethernet_frame(
         byte_view{record->capture.packet.bytes});
+    record->process = std::move(process);
     summarize(*record);
 
     std::lock_guard<std::mutex> lock{mutex_};

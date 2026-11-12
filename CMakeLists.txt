@@ -60,6 +60,7 @@ add_library(netscope_core STATIC
     src/analysis/ip_reassembly.cpp
     src/analysis/packet_compare.cpp
     src/analysis/anomaly_detector.cpp
+    src/analysis/process_tracker.cpp
     src/analysis/reverse_dns.cpp
     src/analysis/tcp_flow.cpp
     src/analysis/traffic_statistics.cpp

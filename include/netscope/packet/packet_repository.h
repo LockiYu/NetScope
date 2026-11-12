@@ -8,10 +8,16 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace netscope::packet {
+
+struct process_owner {
+    std::string name;
+    std::int32_t pid{0};
+};
 
 struct packet_record {
     std::uint64_t number{0};
@@ -21,6 +27,7 @@ struct packet_record {
     std::string destination;
     std::string protocol;
     std::string information;
+    std::optional<process_owner> process;
 };
 
 class packet_repository final {
@@ -28,7 +35,8 @@ public:
     explicit packet_repository(std::size_t capacity = 100000);
 
     [[nodiscard]] std::shared_ptr<const packet_record> append(
-        capture::merged_packet packet);
+        capture::merged_packet packet,
+        std::optional<process_owner> process = std::nullopt);
     [[nodiscard]] std::shared_ptr<const packet_record> at(std::size_t index) const;
     [[nodiscard]] std::vector<std::shared_ptr<const packet_record>> snapshot() const;
     [[nodiscard]] std::size_t size() const;
