@@ -1,6 +1,6 @@
 # NetScope
 
-NetScope is an independent macOS packet sniffer and protocol analyzer. It uses libpcap for capture and Qt 6 for the native desktop interface; it does not invoke Wireshark or tshark.
+NetScope is an independent macOS packet sniffer and protocol analyzer. It uses libpcap for capture and Qt 6 for the native desktop interface; it does not invoke Wireshark or tshark. An optional extcap bridge exposes NetScope captures to Wireshark as an interoperability add-on, not as a runtime dependency.
 
 
 ## Features
@@ -12,6 +12,7 @@ NetScope is an independent macOS packet sniffer and protocol analyzer. It uses l
 - IPv4 and IPv6 fragment reassembly, TCP flow tracking and stream reassembly, RTT and retransmission metrics, timing charts, traffic statistics, explainable observations, and configurable thresholds.
 - Process attribution for live capture: libproc maps TCP/UDP five-tuples to the owning process, the packet and flow views show it, flows can be filtered by process, and `process`/`proc` fields work in display filters.
 - PCAP open/save, filtered-packet export, TCP-flow export, protocol-tree JSON export, and two-packet field comparison.
+- A Wireshark extcap bridge (`netscope-extcap`) that lists every local interface in Wireshark, streams pcapng, and attaches the owning process to each packet as a packet comment.
 
 Capture uses libpcap directly at the data-link layer. It neither reads nor uses HTTP, HTTPS, or SOCKS proxy settings, so local proxy configuration cannot redirect captured traffic or application network access. Reverse DNS uses the operating system resolver and otherwise follows the machine's normal network configuration.
 
@@ -43,6 +44,19 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNETSCOPE_BUILD_DOCS_TO
 cmake --build build -j
 QT_QPA_PLATFORM=offscreen ./build/netscope_screenshots docs/figures
 ```
+
+## Wireshark extcap bridge
+
+`build/netscope-extcap` implements the Wireshark extcap contract. It reuses the same libpcap capture path as the application and emits pcapng: a section header, one interface description block, and one enhanced packet block per packet. When a five-tuple matches a local process, the block carries a `NetScope process: <name> (pid <pid>)` comment that Wireshark shows in the packet comments pane.
+
+```sh
+cmake --build build -j
+sh tools/extcap/install_extcap.sh
+```
+
+The installer links the binary into Wireshark's personal extcap folder (detected with `tshark -G folders`, falling back to `~/.local/lib/wireshark/extcap`). Restart Wireshark, open **Capture > Options**, and pick a `NetScope: <device>` interface. The interface configuration exposes a capture filter, snapshot length, a switch for process names, and the process refresh interval.
+
+The bridge is intentionally one-directional: NetScope never links against Wireshark, and the plugin only adapts NetScope output to Wireshark's interface. Attribution follows the same limits as the application: only processes readable by the current user are matched, the socket map is refreshed every few seconds, and no process information is written into exported PCAP or JSON files.
 
 ## Capture permission
 

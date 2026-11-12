@@ -258,6 +258,45 @@ target_link_libraries(netscope_process_tracker_test PRIVATE
 
 gtest_discover_tests(netscope_process_tracker_test DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 30)
 
+add_executable(netscope_pcapng_test
+    unit/pcapng_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_pcapng_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_pcapng_test DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 30)
+
+add_executable(netscope_packet_writer_test
+    unit/packet_writer_test.cpp
+    ${NETSCOPE_TEST_SUPPORT_SOURCE}
+)
+
+target_link_libraries(netscope_packet_writer_test PRIVATE
+    netscope_core
+    GTest::gtest_main
+)
+
+gtest_discover_tests(netscope_packet_writer_test DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 30)
+
+add_test(NAME extcap_lists_interfaces COMMAND netscope_extcap --extcap-interfaces)
+set_tests_properties(extcap_lists_interfaces PROPERTIES
+    PASS_REGULAR_EXPRESSION "interface \\{value=netscope_")
+
+add_test(NAME extcap_reports_ethernet_dlt COMMAND netscope_extcap --extcap-dlts --extcap-interface=netscope_lo0)
+set_tests_properties(extcap_reports_ethernet_dlt PROPERTIES
+    PASS_REGULAR_EXPRESSION "dlt \\{number=1\\}\\{name=EN10MB")
+
+add_test(NAME extcap_reports_configuration COMMAND netscope_extcap --extcap-config --extcap-interface=netscope_lo0)
+set_tests_properties(extcap_reports_configuration PROPERTIES
+    PASS_REGULAR_EXPRESSION "arg \\{number=0\\}\\{call=--filter")
+
+add_test(NAME extcap_rejects_unknown_interface COMMAND netscope_extcap --capture --extcap-interface=netscope_missing0 --fifo=/dev/null)
+set_tests_properties(extcap_rejects_unknown_interface PROPERTIES WILL_FAIL TRUE)
+
 add_executable(netscope_packet_compare_test
     unit/packet_compare_test.cpp
     ${NETSCOPE_TEST_SUPPORT_SOURCE}
