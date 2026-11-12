@@ -60,11 +60,18 @@ def set_repeat_header(row):
     tr_pr.append(tbl_header)
 
 
+def prevent_row_split(row):
+    tr_pr = row._tr.get_or_add_trPr()
+    if tr_pr.find(qn("w:cantSplit")) is None:
+        tr_pr.append(OxmlElement("w:cantSplit"))
+
+
 def add_table(doc, headers, rows, widths=None):
     table = doc.add_table(rows=1, cols=len(headers))
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.style = "Table Grid"
     set_repeat_header(table.rows[0])
+    prevent_row_split(table.rows[0])
     for index, text in enumerate(headers):
         cell = table.rows[0].cells[index]
         shade(cell, "1F4E78")
@@ -76,7 +83,9 @@ def add_table(doc, headers, rows, widths=None):
         run.font.color.rgb = RGBColor(255, 255, 255)
         set_cell_margins(cell)
     for row_index, values in enumerate(rows):
-        cells = table.add_row().cells
+        added_row = table.add_row()
+        prevent_row_split(added_row)
+        cells = added_row.cells
         for column, text in enumerate(values):
             cell = cells[column]
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -192,7 +201,7 @@ set_run_font(summary.add_run(
 doc.add_page_break()
 
 add_heading(doc, "摘要")
-add_body(doc, "NetScope 是面向 macOS 的独立网络数据包嗅探与协议分析工具。软件直接调用 libpcap 从多个网络接口获取二层帧，不依赖 Wireshark 或 tshark；在用户态完成安全字节读取、分层协议解析、内核 BPF 抓包过滤、布尔显示过滤、TCP 流追踪、IP 分片重组、进程归属、统计分析与异常观察。Qt 6 界面采用标准三窗格浏览器，将包列表、协议树与十六进制字节进行双向联动。项目满足实验对 GUI、NPS、分层过滤与 OSI 层次理解的要求，并实现了基于 IP 加端口的 TCP 流追踪与基于进程的流归属两项加分功能。")
+add_body(doc, "NetScope 是面向 macOS 的独立网络数据包嗅探与协议分析工具。软件直接调用 libpcap 从多个网络接口获取二层帧，不依赖 Wireshark 或 tshark；在用户态完成安全字节读取、分层协议解析、内核 BPF 抓包过滤、布尔显示过滤、TCP 流追踪、IP 分片重组、进程归属、统计分析与异常观察，并提供可选的 Wireshark extcap 互操作桥。Qt 6 界面采用标准三窗格浏览器，将包列表、协议树与十六进制字节进行双向联动。项目满足实验对 GUI、NPS、分层过滤与 OSI 层次理解的要求，并实现了基于 IP 加端口的 TCP 流追踪与基于进程的流归属两项加分功能。")
 add_body(doc, "关键词：网络嗅探；libpcap；BPF；协议解析；TCP 流；Qt 6")
 
 add_heading(doc, "1 实验目标与项目定位")
@@ -204,6 +213,7 @@ add_table(doc, ["要求", "实现", "验收依据"], [
     ("协议过滤", "内核 BPF 与应用层逻辑表达式两级过滤", "编译验证与过滤器单元测试"),
     ("TCP 流", "五元组归并、握手状态、重传、乱序、RTT、双向重组和时序图", "流追踪单元测试与界面测试"),
     ("进程归属", "libproc 采样五元组到进程的映射，包列表与流视图按进程过滤", "进程追踪单元测试与界面测试"),
+    ("Wireshark 互操作", "extcap 接口把 NetScope 暴露为 Wireshark 数据源，pcapng 包注释携带进程", "extcap 契约测试、pcapng 单元测试与端到端验证"),
 ], widths=[1.1, 4.1, 1.6])
 
 add_heading(doc, "2 OSI 七层模型与抓包层次")
@@ -286,7 +296,7 @@ add_bullet(doc, "软件不尝试解密 HTTPS，仅显示可见 TLS 握手元数�
 add_bullet(doc, "进程归属仅在内存中与数据包关联，导出的 PCAP 与 JSON 不写入进程信息；读取其他用户进程失败时静默跳过，不提升权限。")
 
 add_heading(doc, "10 测试与验证")
-add_body(doc, "项目采用测试驱动开发，当前共 96 个自动化测试。单元测试使用手工构造的最小帧覆盖正常、截断、乱序、重传、重叠分片、非法过滤表达式以及进程归属的出站、入站、监听 socket 与未知五元组。集成测试在 Qt offscreen 平台下验证三窗格、抓包控件、反向 DNS、流面板、进程列与进程过滤、统计图、观察、标记、导出与分片完成记录。")
+add_body(doc, "项目采用测试驱动开发，当前共 108 个自动化测试。单元测试使用手工构造的最小帧覆盖正常、截断、乱序、重传、重叠分片、非法过滤表达式以及进程归属的出站、入站、监听 socket 与未知五元组。集成测试在 Qt offscreen 平台下验证三窗格、抓包控件、反向 DNS、流面板、进程列与进程过滤、统计图、观察、标记、导出与分片完成记录。")
 add_table(doc, ["测试类别", "覆盖内容", "预期"], [
     ("构建与解析", "工具链、字节读取、协议树、校验和应用层元数据", "全部通过"),
     ("采集与存储", "PCAP、网卡、BPF、运行器、合并与仓库", "全部通过"),
@@ -308,7 +318,20 @@ set_run_font(code.add_run(
     "open build/NetScope.app"), name="Menlo", size=9.5)
 add_body(doc, "macOS 默认保护 dev bpf 设备。本项目不安装 Wireshark ChmodBPF 或任何开机启动项，而是在演示前使用 sudo chown 和 sudo chmod 临时授予当前用户读写现有 BPF 设备的权限。设备重建或系统重启后该修改会失效，不形成持久权限。若无权限，界面会保留可读错误而不崩溃。")
 
-add_heading(doc, "12 演示与验收建议")
+add_heading(doc, "12 Wireshark extcap 互操作")
+add_body(doc, "实验说明把基于 Wireshark 的二次开发列为加分项。NetScope 的定位仍是独立实现，因此这一项以互操作桥的形式落地：一个独立的 extcap 可执行文件把 NetScope 的采集能力接入 Wireshark，应用本身不链接 Wireshark，也不改变现有的抓包与解析路径。")
+add_body(doc, "extcap 是 Wireshark 定义的进程级接口。Wireshark 通过四个调用与插件交互：列出接口、声明链路类型、查询配置项以及开始抓包。NetScope extcap 复用 list_network_interfaces 枚举网卡，复用 open_live_capture 建立抓包会话，因此 BPF、截断长度、读超时与 immediate mode 的行为与主程序完全一致。")
+add_table(doc, ["extcap 调用", "NetScope 的应答", "说明"], [
+    ("--extcap-interfaces", "extcap 版本行与 interface 行", "每张本机网卡暴露为 NetScope: en0"),
+    ("--extcap-dlts", "dlt number 等于 1，EN10MB", "链路类型为以太网"),
+    ("--extcap-config", "filter、snaplen、no-processes、refresh", "抓包过滤、截断长度、进程名开关与刷新间隔"),
+    ("--capture --fifo", "pcapng 流写入 FIFO", "Wireshark 关闭读端时插件自行退出"),
+], widths=[1.8, 2.7, 2.5])
+add_body(doc, "数据格式选择 pcapng 而不是经典 pcap，是因为 pcapng 的增强包块带有选项区，可以把归属进程写成 packet comment，形如 NetScope process: Safari (pid 1842)。Wireshark 会把它显示在报文注释面板，于是同一个报文既有原始字节，也有采集侧的进程上下文。插件为每个包生成一个增强包块，时间戳使用微秒精度的 64 位时间；进程映射每 5 秒刷新一次，读取其他用户进程失败时按无归属处理，与主程序的边界一致。当前插件只暴露单接口采集，多网卡归并仍由主程序完成。")
+add_body(doc, "验证分三层。extcap 契约（接口枚举、链路类型、配置项以及未知接口被拒绝）作为 CTest 用例；pcapng 块编码（块长度自洽、字节序魔数、时间戳、选项与四字节填充）由单元测试覆盖；端到端则在一次实测中于本机 en0 上通过 FIFO 采集 78 个包，再用独立的 pcapng 实现（scapy）回读，得到 78 个报文与 38 条进程注释，说明第三方解析器可以正确读取该流。")
+add_body(doc, "使用方式是运行 tools/extcap/install_extcap.sh，脚本把可执行文件链接到 Wireshark 的个人 extcap 目录（通过 tshark -G folders 探测，回退到 ~/.local/lib/wireshark/extcap）。重启 Wireshark 后，在 Capture Options 中即可看到 NetScope 接口，并可设置抓包过滤、截断长度与进程名开关。")
+
+add_heading(doc, "13 演示与验收建议")
 add_table(doc, ["顺序", "操作", "展示要点"], [
     ("1", "选择物理网卡和 lo0，使用完整包长开始抓包", "多网卡、状态切换和绝对时间"),
     ("2", "访问 HTTP 站点并执行 DNS 查询", "DNS HTTP TCP UDP 颜色、元数据和反向 DNS"),
@@ -318,13 +341,14 @@ add_table(doc, ["顺序", "操作", "展示要点"], [
     ("6", "在流面板按进程过滤，例如只保留 Safari", "进程归属与某进程的全部 TCP 流"),
     ("7", "展示统计和观察面板，调整阈值", "可解释证据与可配置性"),
     ("8", "标记备注，对比两包，导出过滤 PCAP 与 JSON", "调查工作流的完整性"),
+    ("9", "在 Wireshark 的 Capture Options 中选择 NetScope 接口并抓包", "extcap 互操作与报文注释中的进程归属"),
 ], widths=[0.55, 3.6, 3.05])
 
-add_heading(doc, "13 局限与后续工作")
+add_heading(doc, "14 局限与后续工作")
 add_body(doc, "当前版本不解密 TLS 应用数据，也未以插件机制动态加载协议解析器。进程归属只覆盖当前用户可读的进程，受 SIP 保护的系统进程与其他用户进程不可见；归属索引每 5 秒采样一次，短连接可能漏判；离线 PCAP 不携带进程信息，因此打开文件时不做事后归属。这些限制不影响实验的 NPS、分层过滤、TCP 流和进程流归属要求。后续可增加 QUIC 初始包元数据、长时会话的磁盘流式存储、更精细的 IPv6 分片超时策略，以及基于 macOS Network Extension 的授权进程追踪。")
 
-add_heading(doc, "14 结论")
-add_body(doc, "NetScope 已完成从 macOS 网络接口到图形化分析结果的完整闭环。它不依赖现有协议分析器，而是以可测试的安全字节解析为基础，将内核 BPF、多网卡采集、协议树、流重组、进程归属、时序图、统计观察和调查导出整合为一个原生桌面工具。实验要求的 OSI 层次理解、分层协议过滤、基于 IP 加端口的 TCP 流以及某进程产生的所有 TCP 流均已落地，同时保留了清晰的安全边界和可扩展架构。")
+add_heading(doc, "15 结论")
+add_body(doc, "NetScope 已完成从 macOS 网络接口到图形化分析结果的完整闭环。它不依赖现有协议分析器，而是以可测试的安全字节解析为基础，将内核 BPF、多网卡采集、协议树、流重组、进程归属、时序图、统计观察和调查导出整合为一个原生桌面工具，并提供 Wireshark extcap 互操作桥覆盖二次开发加分项。实验要求的 OSI 层次理解、分层协议过滤、基于 IP 加端口的 TCP 流以及某进程产生的所有 TCP 流均已落地，同时保留了清晰的安全边界和可扩展架构。")
 
 for paragraph in doc.paragraphs:
     if paragraph.style.name == "Normal":
