@@ -69,6 +69,8 @@ add_library(netscope_core STATIC
     src/capture/live_capture.cpp
     src/capture/packet_merger.cpp
     src/capture/pcap_file.cpp
+    src/capture/pcapng.cpp
+    src/extcap/packet_writer.cpp
     src/packet/byte_inspector.cpp
     src/packet/byte_reader.cpp
     src/packet/packet_repository.cpp
@@ -115,6 +117,14 @@ set_target_properties(netscope_app PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "edu.ucas.netscope"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+)
+
+add_executable(netscope_extcap tools/extcap/main.cpp)
+
+target_link_libraries(netscope_extcap PRIVATE netscope_core)
+
+set_target_properties(netscope_extcap PROPERTIES
+    OUTPUT_NAME "netscope-extcap"
 )
 
 if(NETSCOPE_BUILD_DOCS_TOOLS)
