@@ -51,6 +51,7 @@
 #include <QChart>
 #include <QChartView>
 #include <QLineSeries>
+#include <QValueAxis>
 #include <QPieSeries>
 
 #include <exception>
@@ -582,18 +583,28 @@ main_window::main_window(
     auto* const flow_chart = new QChart{};
     flow_chart->addSeries(flow_timing_series);
     flow_chart->setTitle(QStringLiteral("Flow timing"));
-    flow_chart->createDefaultAxes();
+    auto* const flow_time_axis = new QValueAxis{flow_chart};
+    flow_time_axis->setTitleText(QStringLiteral("Elapsed (ms)"));
+    flow_time_axis->setRange(0.0, 100.0);
+    auto* const flow_byte_axis = new QValueAxis{flow_chart};
+    flow_byte_axis->setTitleText(QStringLiteral("Cumulative bytes"));
+    flow_byte_axis->setRange(0.0, 100.0);
+    flow_chart->addAxis(flow_time_axis, Qt::AlignBottom);
+    flow_chart->addAxis(flow_byte_axis, Qt::AlignLeft);
+    flow_timing_series->attachAxis(flow_time_axis);
+    flow_timing_series->attachAxis(flow_byte_axis);
     auto* const flow_chart_view = new QChartView{flow_chart, flow_panel};
     flow_chart_view->setObjectName(QStringLiteral("flowTimingChart"));
     flow_chart_view->setRenderHint(QPainter::Antialiasing);
-    flow_chart_view->setMaximumHeight(180);
+    flow_chart_view->setMinimumHeight(220);
+    flow_chart_view->setMaximumHeight(260);
     flow_data_ = new QPlainTextEdit{flow_panel};
     flow_data_->setObjectName(QStringLiteral("tcpFlowData"));
     flow_data_->setReadOnly(true);
     flow_data_->setLineWrapMode(QPlainTextEdit::NoWrap);
     flow_data_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     flow_data_->setPlaceholderText(QStringLiteral("Select a TCP flow to inspect reassembled data."));
-    flow_panel->setSizes({180, 150, 120});
+    flow_panel->setSizes({200, 260, 140});
     flow_dock->setWidget(flow_container);
     addDockWidget(Qt::BottomDockWidgetArea, flow_dock);
     connect(
@@ -696,7 +707,14 @@ main_window::main_window(
     anomaly_table->setModel(anomaly_model_);
     anomaly_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     anomaly_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    anomaly_table->horizontalHeader()->setStretchLastSection(true);
+    anomaly_table->horizontalHeader()->setSectionResizeMode(
+        0, QHeaderView::ResizeToContents);
+    anomaly_table->horizontalHeader()->setSectionResizeMode(
+        1, QHeaderView::ResizeToContents);
+    anomaly_table->horizontalHeader()->setSectionResizeMode(
+        2, QHeaderView::Stretch);
+    anomaly_table->horizontalHeader()->setSectionResizeMode(
+        3, QHeaderView::ResizeToContents);
     anomaly_layout->addWidget(anomaly_table, 1);
     anomaly_dock->setWidget(anomaly_panel);
     addDockWidget(Qt::BottomDockWidgetArea, anomaly_dock);
@@ -1210,7 +1228,8 @@ main_window::main_window(
         flow_table_->selectionModel(),
         &QItemSelectionModel::currentRowChanged,
         this,
-        [this, flow_timing_series, flow_chart](const QModelIndex& current) {
+        [this, flow_timing_series, flow_time_axis, flow_byte_axis](
+            const QModelIndex& current) {
             if (!current.isValid()) {
                 return;
             }
@@ -1232,6 +1251,7 @@ main_window::main_window(
             flow_timing_series->clear();
             std::optional<std::chrono::system_clock::time_point> first_time;
             std::uint64_t cumulative_bytes{0U};
+            double last_elapsed{0.0};
             for (const auto packet_number : found->packet_numbers) {
                 const auto packet = std::find_if(
                     packets_.begin(), packets_.end(), [packet_number](const auto& item) {
@@ -1247,13 +1267,15 @@ main_window::main_window(
                 cumulative_bytes += (*packet)->capture.packet.captured_length;
                 const auto elapsed = std::chrono::duration<double, std::milli>(
                     timestamp - first_time.value()).count();
+                last_elapsed = elapsed;
                 flow_timing_series->append(elapsed, static_cast<qreal>(cumulative_bytes));
             }
-            for (auto* const axis : flow_chart->axes()) {
-                flow_chart->removeAxis(axis);
-                axis->deleteLater();
-            }
-            flow_chart->createDefaultAxes();
+            flow_time_axis->setRange(0.0, std::max(last_elapsed * 1.05, 1.0));
+            flow_byte_axis->setRange(
+                0.0,
+                std::max(
+                    static_cast<double>(cumulative_bytes) * 1.05,
+                    1.0));
         });
     connect(
         flow_table_,
