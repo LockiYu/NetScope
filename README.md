@@ -1,26 +1,26 @@
 # NetScope
 
-NetScope is an independent macOS packet sniffer and protocol analyzer. It uses libpcap for capture and Qt 6 for the native desktop interface; it does not invoke Wireshark or tshark. An optional extcap bridge exposes NetScope captures to Wireshark as an interoperability add-on, not as a runtime dependency.
+NetScope 是一款面向 macOS 的独立网络嗅探与协议分析工具。项目使用 libpcap 抓包，使用 Qt 6 构建原生桌面界面，不调用 Wireshark 或 tshark。可选的 extcap 桥接器可将 NetScope 的抓包能力接入 Wireshark，作为互操作扩展，不构成运行时依赖。
 
 
-## Features
+## 功能概览
 
-- Live capture from one or more interfaces with selectable snapshot length, pause, resume, stop, kernel BPF filtering, packet merge, and duplicate suppression.
-- Standard three-pane packet browser with sortable, movable, hideable, resizable, and persistent columns.
-- Ethernet II, stacked VLAN, ARP, IPv4, IPv6 extension headers, TCP, UDP, ICMP, ICMPv6, DNS, DHCP, HTTP metadata, and TLS ClientHello metadata parsing.
-- Display-filter expressions with logical operators and field comparisons, reverse DNS, protocol colors, marks, notes, byte search, byte-range synchronization, and integer inspection.
-- IPv4 and IPv6 fragment reassembly, TCP flow tracking and stream reassembly, RTT and retransmission metrics, timing charts, traffic statistics, explainable observations, and configurable thresholds.
-- Process attribution for live capture: libproc maps TCP/UDP five-tuples to the owning process, the packet and flow views show it, flows can be filtered by process, and `process`/`proc` fields work in display filters.
-- PCAP open/save, filtered-packet export, TCP-flow export, protocol-tree JSON export, and two-packet field comparison.
-- A Wireshark extcap bridge (`netscope-extcap`) that lists every local interface in Wireshark, streams pcapng, and attaches the owning process to each packet as a packet comment.
+- 支持从一个或多个网络接口实时抓包，可设置抓包长度，并支持暂停、继续、停止、内核 BPF 过滤、数据包归并与去重。
+- 提供标准三窗格数据包浏览器，列支持排序、移动、隐藏、调整宽度和持久化。
+- 解析 Ethernet II、堆叠 VLAN、ARP、IPv4、IPv6 扩展头、TCP、UDP、ICMP、ICMPv6、DNS、DHCP、HTTP 元数据和 TLS ClientHello 元数据。
+- 支持带逻辑运算符和字段比较的显示过滤表达式，以及 DNS 反向解析、协议着色、标记、备注、字节搜索、字节范围联动和整数解释。
+- 支持 IPv4/IPv6 分片重组、TCP 流跟踪与字节流重组、RTT 和重传指标、时序图、流量统计、可解释观察和可配置阈值。
+- 支持实时抓包的进程归属：macOS `libproc` 将 TCP/UDP 五元组映射到所属进程，数据包和流视图可显示归属结果，并可按进程过滤流。显示过滤器同时支持 `process` 和 `proc` 字段。
+- 支持 PCAP 打开与保存、过滤后数据包导出、TCP 流导出、协议树 JSON 导出和两个数据包的字段对比。
+- 提供 Wireshark extcap 桥接器 `netscope-extcap`，可在 Wireshark 中列出本机全部网络接口、输出 pcapng，并以数据包注释的形式附加所属进程。
 
-Capture uses libpcap directly at the data-link layer. It neither reads nor uses HTTP, HTTPS, or SOCKS proxy settings, so local proxy configuration cannot redirect captured traffic or application network access. Reverse DNS uses the operating system resolver and otherwise follows the machine's normal network configuration.
+抓包数据面通过 libpcap 直接读取数据链路层数据，不读取、也不使用 HTTP、HTTPS 或 SOCKS 代理设置，因此本机代理不会改变抓取路径。DNS 反向解析调用操作系统解析器，并遵循本机默认网络配置。
 
-Process attribution relies on macOS `libproc` and is refreshed from a background thread every five seconds. It only covers processes readable by the current user (SIP-protected and other users' processes are skipped), it applies to live capture only, and it is never written into exported PCAP or JSON files.
+进程归属依赖 macOS `libproc`，后台线程每 5 秒刷新一次映射。该功能只覆盖当前用户有权读取的进程，跳过受 SIP 保护的进程和其他用户的进程；仅对实时抓包生效，且不会将进程信息写入导出的 PCAP 或 JSON 文件。
 
-## Build on macOS
+## 在 macOS 上构建
 
-Requirements: a macOS release supported by the selected Qt 6 toolchain, Apple Clang with C++17, CMake 3.25+, Ninja, Qt 6.8+ with Charts, libpcap, and GoogleTest.
+环境要求：Qt 6 工具链支持的 macOS 版本、支持 C++17 的 Apple Clang、CMake 3.25 或更高版本、Ninja、Qt 6.8 或更高版本（含 Charts）、libpcap 和 GoogleTest。
 
 ```sh
 brew install cmake ninja qt libpcap googletest
@@ -28,16 +28,16 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-The application bundle is generated at `build/NetScope.app`.
+应用程序包生成在 `build/NetScope.app`。
 
-If CMake resolves a GoogleTest package whose libraries do not match (for example a stale Anaconda installation that appears earlier on `PATH`), point it at the Homebrew package explicitly:
+如果 CMake 解析到与库文件不匹配的 GoogleTest 包，例如 `PATH` 中更靠前的旧 Anaconda 安装，可显式指定 Homebrew 包：
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DGTest_DIR="$(brew --prefix googletest)/lib/cmake/GTest"
 ```
 
-Report screenshots are reproduced deterministically with the optional documentation tool:
+可使用可选的文档工具以可复现的方式生成报告截图：
 
 ```sh
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNETSCOPE_BUILD_DOCS_TOOLS=ON
@@ -45,40 +45,40 @@ cmake --build build -j
 QT_QPA_PLATFORM=offscreen ./build/netscope_screenshots docs/figures
 ```
 
-## Wireshark extcap bridge
+## Wireshark extcap 互操作桥
 
-`build/netscope-extcap` implements the Wireshark extcap contract. It reuses the same libpcap capture path as the application and emits pcapng: a section header, one interface description block, and one enhanced packet block per packet. When a five-tuple matches a local process, the block carries a `NetScope process: <name> (pid <pid>)` comment that Wireshark shows in the packet comments pane.
+`build/netscope-extcap` 实现 Wireshark extcap 契约。它复用主程序的 libpcap 抓包路径，并输出 pcapng：包含一个节头块、一个接口描述块，以及每个数据包对应的增强数据包块。五元组命中本地进程时，块中会写入 `NetScope process: <name> (pid <pid>)` 注释，Wireshark 会在数据包注释面板中显示该信息。
 
 ```sh
 cmake --build build -j
 sh tools/extcap/install_extcap.sh
 ```
 
-The installer links the binary into Wireshark's personal extcap folder (detected with `tshark -G folders`, falling back to `~/.local/lib/wireshark/extcap`). Restart Wireshark, open **Capture > Options**, and pick a `NetScope: <device>` interface. The interface configuration exposes a capture filter, snapshot length, a switch for process names, and the process refresh interval.
+安装脚本会把可执行文件链接到 Wireshark 的个人 extcap 目录。脚本优先通过 `tshark -G folders` 检测目录，检测失败时使用 `~/.local/lib/wireshark/extcap`。重启 Wireshark 后，打开 **捕获 > 选项**，选择 `NetScope: <device>` 接口。接口配置支持抓包过滤器、抓包长度、进程名开关和进程映射刷新间隔。
 
-The bridge is intentionally one-directional: NetScope never links against Wireshark, and the plugin only adapts NetScope output to Wireshark's interface. Attribution follows the same limits as the application: only processes readable by the current user are matched, the socket map is refreshed every few seconds, and no process information is written into exported PCAP or JSON files.
+桥接方向为 NetScope 到 Wireshark。NetScope 不链接 Wireshark，桥接器只负责把 NetScope 输出转换为 Wireshark 接口。进程归属的范围与主程序相同：只匹配当前用户可读的进程，每隔数秒刷新套接字映射，且不向导出的 PCAP 或 JSON 文件写入进程信息。
 
-## Capture permission
+## 抓包权限
 
-macOS protects `/dev/bpf*`. NetScope does not require Wireshark's permission helper. For temporary access that lasts until the BPF devices are recreated or the machine restarts, run the following commands immediately before starting NetScope:
+macOS 保护 `/dev/bpf*` 设备。NetScope 不需要 Wireshark 的权限辅助组件。如需临时授权，可在启动 NetScope 前执行：
 
 ```sh
 sudo chown "$USER":admin /dev/bpf*
 sudo chmod 660 /dev/bpf*
 ```
 
-These commands only change the currently existing BPF device permissions and do not install a launch daemon or create a startup item.
+上述命令只修改当前已存在的 BPF 设备权限，不安装守护进程，也不创建开机启动项。设备重建或系统重启后，权限修改会失效。
 
-If opening an interface fails, verify that a `/dev/bpf*` device is readable by the current user. Loopback (`lo0`) is useful for a controlled local test. Tunnel and VPN interfaces are shown but excluded from the default selection; physical active interfaces are selected by default when available.
+如果打开网络接口失败，请检查当前用户是否可读取 `/dev/bpf*` 设备。回环接口 `lo0` 适合用于受控的本机测试。界面会显示隧道和 VPN 接口，但默认不选中；存在活动物理接口时，会默认选中它们。
 
-## Run and test
+## 运行与测试
 
 ```sh
 open build/NetScope.app
 ctest --test-dir build --output-on-failure
 ```
 
-Sanitizer builds:
+启用消毒器的构建方式：
 
 ```sh
 cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug \
@@ -92,4 +92,4 @@ cmake --build build-tsan -j
 ctest --test-dir build-tsan --output-on-failure
 ```
 
-Only capture traffic you are authorized to inspect. HTTPS payload decryption is intentionally out of scope; NetScope displays unencrypted protocol metadata such as TLS version, handshake type, SNI, and ALPN.
+请只抓取已获授权检查的流量。NetScope 的分析范围为未加密协议内容与可见的 TLS 握手元数据，包括 TLS 版本、握手类型、SNI 和 ALPN；不解密 HTTPS 应用数据。
