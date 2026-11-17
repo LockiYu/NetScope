@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -327,6 +328,118 @@ TEST(main_window_test, connects_capture_actions_to_the_multi_interface_runner) {
     EXPECT_EQ(table->model()->rowCount(), 1);
     EXPECT_TRUE(start->isEnabled());
     EXPECT_FALSE(stop->isEnabled());
+}
+
+TEST(main_window_test, flags_invalid_saved_capture_filter_after_restart) {
+    QCoreApplication::setOrganizationName(QStringLiteral("NetScopeInvalidFilterTest"));
+    QCoreApplication::setApplicationName(QStringLiteral("NetScopeInvalidFilterTest"));
+    {
+        QSettings settings;
+        settings.clear();
+        settings.setValue(QStringLiteral("capture/lastFilter"), QStringLiteral("11"));
+        settings.sync();
+    }
+    {
+        netscope::ui::main_window window;
+        auto* const filter =
+            window.findChild<QLineEdit*>(QStringLiteral("captureFilterEdit"));
+        ASSERT_NE(filter, nullptr);
+        EXPECT_EQ(filter->text(), QStringLiteral("11"));
+        EXPECT_TRUE(filter->toolTip().contains(QStringLiteral("port 11")));
+        EXPECT_TRUE(filter->styleSheet().contains(QStringLiteral("c94b4b")));
+    }
+    {
+        QSettings settings;
+        settings.clear();
+    }
+    QCoreApplication::setOrganizationName({});
+    QCoreApplication::setApplicationName({});
+}
+
+TEST(main_window_test, refuses_to_start_with_invalid_capture_filter) {
+    int open_attempts{0};
+    netscope::ui::main_window window{
+        [&](const std::string& name, const netscope::capture::capture_options&) {
+            ++open_attempts;
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        }};
+    auto* const interfaces = window.findChild<QListWidget*>(QStringLiteral("interfaceList"));
+    auto* const filter = window.findChild<QLineEdit*>(QStringLiteral("captureFilterEdit"));
+    auto* const start = window.findChild<QAction*>(QStringLiteral("startCaptureAction"));
+    auto* const stop = window.findChild<QAction*>(QStringLiteral("stopCaptureAction"));
+    ASSERT_NE(interfaces, nullptr);
+    ASSERT_NE(filter, nullptr);
+    ASSERT_NE(start, nullptr);
+    ASSERT_NE(stop, nullptr);
+    ASSERT_GT(interfaces->count(), 0);
+    for (int index = 0; index < interfaces->count(); ++index) {
+        interfaces->item(index)->setCheckState(index == 0 ? Qt::Checked : Qt::Unchecked);
+    }
+
+    filter->setText(QStringLiteral("11"));
+    start->trigger();
+    QApplication::processEvents();
+
+    EXPECT_EQ(open_attempts, 0);
+    EXPECT_TRUE(start->isEnabled());
+    EXPECT_FALSE(stop->isEnabled());
+    EXPECT_TRUE(filter->toolTip().contains(QStringLiteral("port 11")));
+    EXPECT_TRUE(filter->styleSheet().contains(QStringLiteral("c94b4b")));
+}
+
+TEST(main_window_test, authorizes_once_and_retries_all_interfaces_after_bpf_denial) {
+    int open_attempts{0};
+    int permission_failures{0};
+    int authorization_requests{0};
+    int consent_requests{0};
+    netscope::ui::main_window window{
+        [&](const std::string& name, const netscope::capture::capture_options&) {
+            ++open_attempts;
+            if (open_attempts % 3 == 0 && permission_failures < 3) {
+                ++permission_failures;
+                throw netscope::capture::capture_permission_error{
+                    "failed to activate capture on '" + name +
+                    "': (cannot open BPF device) /dev/bpf" +
+                    std::to_string(6 + permission_failures) +
+                    ": Permission denied"};
+            }
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string&) -> std::optional<std::string> {
+            return std::nullopt;
+        },
+        [] { return std::vector<netscope::analysis::process_socket>{}; },
+        [&] {
+            ++authorization_requests;
+            return netscope::capture::temporary_bpf_access_result{true, {}};
+        },
+        [&](QWidget*) {
+            ++consent_requests;
+            return true;
+        }};
+    auto* const interfaces = window.findChild<QListWidget*>(QStringLiteral("interfaceList"));
+    auto* const start = window.findChild<QAction*>(QStringLiteral("startCaptureAction"));
+    auto* const stop = window.findChild<QAction*>(QStringLiteral("stopCaptureAction"));
+
+    ASSERT_NE(interfaces, nullptr);
+    ASSERT_GE(interfaces->count(), 3);
+    for (int index = 0; index < interfaces->count(); ++index) {
+        interfaces->item(index)->setCheckState(index < 3 ? Qt::Checked : Qt::Unchecked);
+    }
+
+    start->trigger();
+    QApplication::processEvents();
+
+    EXPECT_EQ(consent_requests, 1);
+    EXPECT_EQ(authorization_requests, 1);
+    EXPECT_EQ(permission_failures, 3);
+    EXPECT_FALSE(start->isEnabled());
+    EXPECT_TRUE(stop->isEnabled());
+
+    stop->trigger();
+    QApplication::processEvents();
 }
 
 TEST(main_window_test, loads_and_saves_pcap_sessions) {

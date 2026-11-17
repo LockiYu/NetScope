@@ -1,6 +1,7 @@
 #include "netscope/ui/main_window.h"
 
 #include "netscope/capture/live_capture.h"
+#include "netscope/capture/macos_bpf_access.h"
 #include "netscope/analysis/packet_compare.h"
 #include "netscope/packet/byte_inspector.h"
 #include "netscope/packet/packet_repository.h"
@@ -30,6 +31,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMetaObject>
+#include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -45,6 +47,7 @@
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QTextCursor>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -315,10 +318,42 @@ main_window::main_window(
     analysis::reverse_dns_resolver::lookup dns_lookup,
     analysis::process_tracker::snapshot_provider process_provider,
     QWidget* parent)
+    : main_window{
+          std::move(opener),
+          std::move(dns_lookup),
+          std::move(process_provider),
+          [] { return capture::request_temporary_macos_bpf_access(); },
+          [](QWidget* const parent_widget) {
+              return QMessageBox::question(
+                         parent_widget,
+                         QStringLiteral("Temporary Capture Permission"),
+                         QStringLiteral(
+                             "macOS created a protected BPF device while starting "
+                             "capture. NetScope can request temporary administrator "
+                             "access and retry all selected interfaces automatically.\n\n"
+                             "No startup service will be installed. The permission "
+                             "ends after reboot or when macOS recreates the devices."),
+                         QMessageBox::Yes | QMessageBox::Cancel,
+                         QMessageBox::Yes) == QMessageBox::Yes;
+          },
+          parent} {}
+
+main_window::main_window(
+    capture::capture_runner::opener opener,
+    analysis::reverse_dns_resolver::lookup dns_lookup,
+    analysis::process_tracker::snapshot_provider process_provider,
+    bpf_access_requester request_bpf_access,
+    bpf_access_consent confirm_bpf_access,
+    QWidget* parent)
     : QMainWindow{parent},
       capture_runner_{std::move(opener)},
+      request_bpf_access_{std::move(request_bpf_access)},
+      confirm_bpf_access_{std::move(confirm_bpf_access)},
       reverse_dns_{std::move(dns_lookup)},
       process_tracker_{std::move(process_provider)} {
+    if (!request_bpf_access_ || !confirm_bpf_access_) {
+        throw std::invalid_argument{"BPF access callbacks must not be empty"};
+    }
     setWindowTitle(QStringLiteral("NetScope"));
     setMinimumSize(960, 640);
 
@@ -1080,27 +1115,80 @@ main_window::main_window(
         capture::capture_options options;
         options.snapshot_length = snapshot_length;
         options.bpf_filter = filter_edit->text().trimmed().toStdString();
+        if (const auto problem = capture::validate_bpf_filter(
+                options.bpf_filter, 1, snapshot_length);
+            problem.has_value()) {
+            const auto message = QString::fromStdString(problem.value());
+            filter_edit->setStyleSheet(
+                QStringLiteral("QLineEdit { border: 1px solid #c94b4b; }"));
+            filter_edit->setToolTip(message);
+            filter_edit->setFocus();
+            statusBar()->showMessage(message, 10000);
+            return;
+        }
+        filter_edit->setStyleSheet({});
+        filter_edit->setToolTip({});
 
         try {
             latest_capture_time_.reset();
             packet_merger_ = capture::packet_merger{};
-            capture_runner_.start(
-                interfaces,
-                options,
-                [this](capture::interface_packet packet) {
-                    enqueue_captured_packet(std::move(packet));
-                },
-                [this](const std::string& message) {
-                    QMetaObject::invokeMethod(
-                        this,
-                        [this, message] {
-                            statusBar()->showMessage(
-                                QStringLiteral("Capture error: %1")
-                                    .arg(QString::fromStdString(message)),
-                                8000);
-                        },
-                        Qt::QueuedConnection);
-                });
+            const auto start_runner = [&] {
+                capture_runner_.start(
+                    interfaces,
+                    options,
+                    [this](capture::interface_packet packet) {
+                        enqueue_captured_packet(std::move(packet));
+                    },
+                    [this](const std::string& message) {
+                        QMetaObject::invokeMethod(
+                            this,
+                            [this, message] {
+                                statusBar()->showMessage(
+                                    QStringLiteral("Capture error: %1")
+                                        .arg(QString::fromStdString(message)),
+                                    8000);
+                            },
+                            Qt::QueuedConnection);
+                    });
+            };
+
+            bool temporary_bpf_access_started{false};
+            std::size_t permission_retries{0};
+            const auto maximum_permission_retries = interfaces.size() + 16U;
+            while (true) {
+                try {
+                    start_runner();
+                    break;
+                } catch (const std::exception& error) {
+                    const bool is_permission_error =
+                        dynamic_cast<const capture::capture_permission_error*>(&error) != nullptr ||
+                        capture::is_macos_bpf_permission_error(error.what());
+                    if (!is_permission_error ||
+                        permission_retries >= maximum_permission_retries) {
+                        throw;
+                    }
+
+                    if (!temporary_bpf_access_started) {
+                        if (!confirm_bpf_access_(this)) {
+                            throw std::runtime_error{
+                                "temporary capture permission was not granted"};
+                        }
+
+                        statusBar()->showMessage(
+                            QStringLiteral("Requesting temporary macOS capture permission…"));
+                        QApplication::processEvents();
+                        const auto access = request_bpf_access_();
+                        if (!access.granted) {
+                            throw std::runtime_error{
+                                "temporary capture permission failed: " + access.error};
+                        }
+                        temporary_bpf_access_started = true;
+                    }
+
+                    ++permission_retries;
+                    QThread::msleep(75);
+                }
+            }
             start_process_refresh();
             start_action_->setEnabled(false);
             pause_action_->setEnabled(true);
@@ -1316,7 +1404,20 @@ main_window::main_window(
         restoreState(settings.value(QStringLiteral("ui/windowState")).toByteArray());
         packet_table->horizontalHeader()->restoreState(
             settings.value(QStringLiteral("ui/packetHeader")).toByteArray());
-        filter_edit->setText(settings.value(QStringLiteral("capture/lastFilter")).toString());
+        const auto saved_filter =
+            settings.value(QStringLiteral("capture/lastFilter")).toString();
+        filter_edit->setText(saved_filter);
+        if (const auto problem = capture::validate_bpf_filter(
+                saved_filter.trimmed().toStdString(), 1, current_snapshot_length_);
+            problem.has_value()) {
+            const auto message = QString::fromStdString(problem.value());
+            filter_edit->setStyleSheet(
+                QStringLiteral("QLineEdit { border: 1px solid #c94b4b; }"));
+            filter_edit->setToolTip(message);
+            statusBar()->showMessage(
+                QStringLiteral("Saved capture filter cannot be applied: %1").arg(message),
+                12000);
+        }
         display_filter_edit_->setText(
             settings.value(QStringLiteral("display/lastFilter")).toString());
     }

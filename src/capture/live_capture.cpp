@@ -1,4 +1,5 @@
 #include "netscope/capture/live_capture.h"
+#include "netscope/capture/macos_bpf_access.h"
 
 #include <pcap/pcap.h>
 
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -184,6 +186,50 @@ bool should_select_by_default(const network_interface& interface) noexcept {
            !interface.is_loopback && !interface.is_tunnel;
 }
 
+namespace {
+
+bool is_bare_number(const std::string& expression) {
+    return !expression.empty() &&
+        std::all_of(
+            expression.begin(), expression.end(), [](const unsigned char character) {
+                return std::isdigit(character) != 0;
+            });
+}
+
+bool looks_like_display_filter(const std::string& expression) {
+    return expression.find('.') != std::string::npos ||
+        expression.find("==") != std::string::npos ||
+        expression.find("!=") != std::string::npos;
+}
+
+bool has_non_ascii(const std::string& expression) {
+    return std::any_of(
+        expression.begin(), expression.end(), [](const unsigned char character) {
+            return character >= 0x80U;
+        });
+}
+
+std::string describe_bpf_compile_error(
+    const std::string& expression,
+    const std::string& compiler_error) {
+    std::string message =
+        "invalid capture filter \"" + expression + "\": " + compiler_error;
+    if (is_bare_number(expression)) {
+        message += " (a bare number is not a filter; try \"port " + expression + "\")";
+    } else if (looks_like_display_filter(expression)) {
+        message +=
+            " (this looks like a Wireshark display filter; use libpcap syntax such as "
+            "\"tcp port 443\")";
+    } else if (has_non_ascii(expression)) {
+        message +=
+            " (the filter contains non-ASCII characters; use ASCII syntax such as "
+            "\"tcp port 443\")";
+    }
+    return message;
+}
+
+}  // namespace
+
 std::optional<std::string> validate_bpf_filter(
     const std::string& expression,
     const int link_type,
@@ -203,7 +249,7 @@ std::optional<std::string> validate_bpf_filter(
     auto program = std::make_unique<bpf_program>();
     if (pcap_compile(
             handle.get(), program.get(), expression.c_str(), 1, PCAP_NETMASK_UNKNOWN) != 0) {
-        return std::string{pcap_geterr(handle.get())};
+        return describe_bpf_compile_error(expression, pcap_geterr(handle.get()));
     }
     compiled_filter owned_program{program.release()};
     return std::nullopt;
@@ -332,9 +378,15 @@ capture_session open_live_capture(
 
     const int activation = pcap_activate(handle.get());
     if (activation < 0) {
-        throw std::runtime_error{
+        const auto message =
             "failed to activate capture on '" + interface_name + "': " +
-            pcap_geterr(handle.get())};
+            pcap_geterr(handle.get());
+        if (activation == PCAP_ERROR_PERM_DENIED ||
+            activation == PCAP_ERROR_PROMISC_PERM_DENIED ||
+            is_macos_bpf_permission_error(message)) {
+            throw capture_permission_error{message};
+        }
+        throw std::runtime_error{message};
     }
 
     if (!options.bpf_filter.empty()) {

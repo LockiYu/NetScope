@@ -6,10 +6,16 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace netscope::capture {
+
+class capture_permission_error final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 struct interface_address {
     std::string address;

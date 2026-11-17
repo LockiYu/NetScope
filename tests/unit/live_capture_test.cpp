@@ -1,4 +1,5 @@
 #include "netscope/capture/live_capture.h"
+#include "netscope/capture/macos_bpf_access.h"
 
 #include <pcap/pcap.h>
 
@@ -23,6 +24,7 @@ using netscope::capture::capture_statistics;
 using netscope::capture::captured_packet;
 using netscope::capture::should_select_by_default;
 using netscope::capture::validate_bpf_filter;
+using netscope::capture::is_macos_bpf_permission_error;
 using netscope::capture::validate_capture_options;
 
 struct fake_backend_state {
@@ -101,6 +103,29 @@ TEST(live_capture_test, validates_bpf_without_starting_capture) {
     const auto error = validate_bpf_filter("tcp and and", DLT_EN10MB, 65535);
     ASSERT_TRUE(error.has_value());
     EXPECT_FALSE(error->empty());
+}
+
+TEST(live_capture_test, explains_common_invalid_capture_filter_syntax) {
+    const auto bare = validate_bpf_filter("11", DLT_EN10MB, 65535);
+    ASSERT_TRUE(bare.has_value());
+    EXPECT_NE(bare->find("port 11"), std::string::npos);
+
+    const auto display = validate_bpf_filter("tcp.port == 443", DLT_EN10MB, 65535);
+    ASSERT_TRUE(display.has_value());
+    EXPECT_NE(display->find("display filter"), std::string::npos);
+    EXPECT_NE(display->find("tcp.port == 443"), std::string::npos);
+}
+
+TEST(live_capture_test, recognizes_macos_bpf_permission_failures) {
+    EXPECT_TRUE(is_macos_bpf_permission_error(
+        "failed to activate capture on 'en2': (cannot open BPF device) "
+        "/dev/bpf7: Permission denied"));
+    EXPECT_TRUE(is_macos_bpf_permission_error(
+        "failed to activate capture: You don't have permission to capture on that device"));
+    EXPECT_FALSE(is_macos_bpf_permission_error(
+        "failed to activate capture: interface went down"));
+    EXPECT_FALSE(is_macos_bpf_permission_error(
+        "Permission denied while opening an unrelated file"));
 }
 
 TEST(live_capture_test, controls_capture_lifecycle_without_consuming_while_paused) {

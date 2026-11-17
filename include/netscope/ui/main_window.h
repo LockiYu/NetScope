@@ -1,6 +1,7 @@
 #pragma once
 
 #include "netscope/capture/capture_runner.h"
+#include "netscope/capture/macos_bpf_access.h"
 #include "netscope/capture/packet_merger.h"
 #include "netscope/analysis/display_filter.h"
 #include "netscope/analysis/anomaly_detector.h"
@@ -18,6 +19,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -46,6 +48,10 @@ namespace netscope::ui {
 
 class main_window final : public QMainWindow {
 public:
+    using bpf_access_requester =
+        std::function<capture::temporary_bpf_access_result()>;
+    using bpf_access_consent = std::function<bool(QWidget*)>;
+
     explicit main_window(QWidget* parent = nullptr);
     explicit main_window(
         capture::capture_runner::opener opener,
@@ -58,6 +64,13 @@ public:
         capture::capture_runner::opener opener,
         analysis::reverse_dns_resolver::lookup dns_lookup,
         analysis::process_tracker::snapshot_provider process_provider,
+        QWidget* parent = nullptr);
+    main_window(
+        capture::capture_runner::opener opener,
+        analysis::reverse_dns_resolver::lookup dns_lookup,
+        analysis::process_tracker::snapshot_provider process_provider,
+        bpf_access_requester request_bpf_access,
+        bpf_access_consent confirm_bpf_access,
         QWidget* parent = nullptr);
     ~main_window() override;
 
@@ -114,6 +127,8 @@ private:
     std::optional<std::size_t> displayed_packet_index_;
     std::optional<std::size_t> current_byte_offset_;
     capture::capture_runner capture_runner_;
+    bpf_access_requester request_bpf_access_;
+    bpf_access_consent confirm_bpf_access_;
     analysis::reverse_dns_resolver reverse_dns_;
     analysis::tcp_flow_tracker flow_tracker_;
     analysis::traffic_statistics statistics_;

@@ -67,6 +67,7 @@ add_library(netscope_core STATIC
     src/analysis/traffic_statistics.cpp
     src/capture/capture_runner.cpp
     src/capture/live_capture.cpp
+    src/capture/macos_bpf_access.cpp
     src/capture/packet_merger.cpp
     src/capture/pcap_file.cpp
     src/capture/pcapng.cpp
