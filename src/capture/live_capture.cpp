@@ -395,7 +395,8 @@ capture_session open_live_capture(
                 handle.get(), program.get(), options.bpf_filter.c_str(), 1,
                 PCAP_NETMASK_UNKNOWN) != 0) {
             throw std::runtime_error{
-                "invalid BPF filter: " + std::string{pcap_geterr(handle.get())}};
+                describe_bpf_compile_error(
+                    options.bpf_filter, pcap_geterr(handle.get()))};
         }
         compiled_filter owned_program{program.release()};
         if (pcap_setfilter(handle.get(), owned_program.get()) != 0) {
