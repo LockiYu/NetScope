@@ -1,4 +1,7 @@
 /build*/
+docs/private/
+docs/*_report.docx
+docs/*_report.pdf
 /.cache/
 /.DS_Store
 /compile_commands.json
