@@ -781,6 +781,31 @@ main_window::main_window(
     anomaly_dock->setWidget(anomaly_panel);
     addDockWidget(Qt::BottomDockWidgetArea, anomaly_dock);
 
+    auto* const view_menu = menuBar()->addMenu(QStringLiteral("View"));
+    const auto add_dock_toggle = [this, view_menu](
+                                     const char* const dock_name,
+                                     const char* const action_name) {
+        if (auto* const dock = findChild<QDockWidget*>(QString::fromLatin1(dock_name));
+            dock != nullptr) {
+            auto* const action = dock->toggleViewAction();
+            action->setObjectName(QString::fromLatin1(action_name));
+            view_menu->addAction(action);
+        }
+    };
+    add_dock_toggle("captureDock", "toggleCaptureDockAction");
+    add_dock_toggle("tcpFlowDock", "toggleFlowDockAction");
+    add_dock_toggle("statisticsDock", "toggleStatisticsDockAction");
+    add_dock_toggle("anomalyDock", "toggleAnomalyDockAction");
+    view_menu->addSeparator();
+    auto* const reset_layout_action = view_menu->addAction(QStringLiteral("Reset layout"));
+    reset_layout_action->setObjectName(QStringLiteral("resetLayoutAction"));
+    connect(reset_layout_action, &QAction::triggered, this, [this] {
+        for (auto* const dock : findChildren<QDockWidget*>()) {
+            dock->setVisible(true);
+        }
+        statusBar()->showMessage(QStringLiteral("Dock layout restored"), 3000);
+    });
+
     statusBar()->showMessage(QStringLiteral("Ready — select one or more interfaces"));
 
     connect(

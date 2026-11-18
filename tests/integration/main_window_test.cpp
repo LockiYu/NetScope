@@ -503,6 +503,29 @@ TEST(main_window_test, reports_selected_field_byte_range_in_the_status_bar) {
     EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("bytes")));
 }
 
+TEST(main_window_test, view_menu_restores_hidden_docks) {
+    netscope::ui::main_window window;
+    auto* const statistics = window.findChild<QDockWidget*>(QStringLiteral("statisticsDock"));
+    auto* const toggle =
+        window.findChild<QAction*>(QStringLiteral("toggleStatisticsDockAction"));
+    auto* const capture = window.findChild<QDockWidget*>(QStringLiteral("captureDock"));
+    auto* const reset = window.findChild<QAction*>(QStringLiteral("resetLayoutAction"));
+    ASSERT_NE(statistics, nullptr);
+    ASSERT_NE(toggle, nullptr);
+    ASSERT_NE(capture, nullptr);
+    ASSERT_NE(reset, nullptr);
+
+    statistics->hide();
+    EXPECT_TRUE(statistics->isHidden());
+    toggle->trigger();
+    EXPECT_FALSE(statistics->isHidden());
+
+    capture->hide();
+    EXPECT_TRUE(capture->isHidden());
+    reset->trigger();
+    EXPECT_FALSE(capture->isHidden());
+}
+
 TEST(main_window_test, destroys_the_window_quickly_while_a_lookup_is_blocked) {
     struct gate {
         std::atomic<bool> entered{false};
