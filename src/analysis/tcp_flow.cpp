@@ -269,6 +269,29 @@ std::vector<tcp_flow_snapshot> tcp_flow_tracker::snapshot() const {
     return result;
 }
 
+std::vector<tcp_flow_snapshot> tcp_flow_tracker::summaries() const {
+    std::lock_guard lock{implementation_->mutex};
+    std::vector<tcp_flow_snapshot> result;
+    result.reserve(implementation_->flows.size());
+    for (const auto& [key, flow] : implementation_->flows) {
+        static_cast<void>(key);
+        const auto& source = flow.snapshot;
+        tcp_flow_snapshot summary;
+        summary.id = source.id;
+        summary.client = source.client;
+        summary.server = source.server;
+        summary.state = source.state;
+        summary.packet_count = source.packet_count;
+        summary.byte_count = source.byte_count;
+        summary.retransmissions = source.retransmissions;
+        summary.out_of_order_segments = source.out_of_order_segments;
+        summary.duplicate_acknowledgements = source.duplicate_acknowledgements;
+        summary.round_trip_time = source.round_trip_time;
+        result.push_back(std::move(summary));
+    }
+    return result;
+}
+
 void tcp_flow_tracker::clear() {
     std::lock_guard lock{implementation_->mutex};
     implementation_->flows.clear();

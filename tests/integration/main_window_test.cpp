@@ -26,10 +26,22 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <thread>
 
 namespace {
+
+bool wait_for(
+    const std::function<bool()>& predicate,
+    const std::chrono::milliseconds timeout = std::chrono::milliseconds{2000}) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+        QApplication::processEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds{2});
+    }
+    return predicate();
+}
 
 QTreeWidgetItem* find_item(QTreeWidgetItem* const root, const QString& name) {
     if (root->text(0) == name) {
@@ -69,6 +81,30 @@ std::shared_ptr<const netscope::packet::packet_record> make_record() {
     return repository.append(netscope::capture::merged_packet{
         netscope::capture::captured_packet{
             std::chrono::system_clock::time_point{std::chrono::microseconds{1000002}},
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(bytes.size()),
+            std::move(bytes),
+        },
+        {"en0"},
+    });
+}
+
+std::shared_ptr<const netscope::packet::packet_record> make_http_record() {
+    const std::string payload = "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n";
+    const auto total = static_cast<std::uint16_t>(40U + payload.size());
+    std::vector<std::uint8_t> bytes{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
+        0x45, 0, static_cast<std::uint8_t>(total >> 8U),
+        static_cast<std::uint8_t>(total), 0, 2, 0x40, 0, 64, 6, 0, 0,
+        192, 168, 1, 10, 93, 184, 216, 34,
+        0x04, 0xd2, 0, 80, 0, 0, 0, 1, 0, 0, 0, 0,
+        0x50, 0x18, 0x40, 0, 0, 0, 0, 0,
+    };
+    bytes.insert(bytes.end(), payload.begin(), payload.end());
+    netscope::packet::packet_repository repository{1};
+    return repository.append(netscope::capture::merged_packet{
+        netscope::capture::captured_packet{
+            std::chrono::system_clock::time_point{std::chrono::microseconds{2000003}},
             static_cast<std::uint32_t>(bytes.size()),
             static_cast<std::uint32_t>(bytes.size()),
             std::move(bytes),
@@ -207,10 +243,12 @@ TEST(main_window_test, shows_process_attribution_and_filters_flows_by_process) {
     EXPECT_EQ(
         packet_table->model()->index(0, 3).data().toString(),
         QStringLiteral("Safari (99)"));
-    EXPECT_GE(flow_table->model()->rowCount(), 1);
+    ASSERT_TRUE(wait_for([&] {
+        return flow_table->model()->rowCount() >= 1 &&
+            process_filter->findText(QStringLiteral("Safari")) > 0;
+    }));
     EXPECT_EQ(flow_table->model()->columnCount(), 10);
     EXPECT_EQ(process_filter->currentText(), QStringLiteral("All processes"));
-    EXPECT_GT(process_filter->findText(QStringLiteral("Safari")), 0);
 
     process_filter->setCurrentIndex(process_filter->findText(QStringLiteral("Safari")));
     QApplication::processEvents();
@@ -354,6 +392,31 @@ TEST(main_window_test, flags_invalid_saved_capture_filter_after_restart) {
     }
     QCoreApplication::setOrganizationName({});
     QCoreApplication::setApplicationName({});
+}
+
+TEST(main_window_test, applies_active_display_filter_to_new_packets_only) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string&) -> std::optional<std::string> { return std::nullopt; }};
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const filter = window.findChild<QLineEdit*>(QStringLiteral("displayFilterEdit"));
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(filter, nullptr);
+
+    filter->setText(QStringLiteral("http"));
+    QMetaObject::invokeMethod(filter, "returnPressed");
+    QApplication::processEvents();
+
+    window.append_packet(make_record());
+    window.append_packet(make_http_record());
+    QApplication::processEvents();
+
+    ASSERT_EQ(table->model()->rowCount(), 2);
+    EXPECT_TRUE(table->isRowHidden(0));
+    EXPECT_FALSE(table->isRowHidden(1));
 }
 
 TEST(main_window_test, refuses_to_start_with_invalid_capture_filter) {
@@ -525,9 +588,7 @@ TEST(main_window_test, exposes_tracked_tcp_flows_in_a_dedicated_view) {
     EXPECT_NE(window.findChild<QObject*>(QStringLiteral("flowTimingChart")), nullptr);
 
     window.append_packet(make_record());
-    QApplication::processEvents();
-
-    ASSERT_EQ(flow_table->model()->rowCount(), 1);
+    ASSERT_TRUE(wait_for([&] { return flow_table->model()->rowCount() == 1; }));
     EXPECT_TRUE(flow_table->model()->index(0, 1).data().toString().contains("192.168.1.10"));
 }
 
@@ -539,9 +600,9 @@ TEST(main_window_test, updates_traffic_statistics_and_protocol_chart) {
     ASSERT_NE(protocol_chart, nullptr);
 
     window.append_packet(make_record());
-    QApplication::processEvents();
-
-    EXPECT_TRUE(packet_count->text().contains(QStringLiteral("1")));
+    EXPECT_TRUE(wait_for([&] {
+        return packet_count->text().contains(QStringLiteral("1"));
+    }));
 }
 
 TEST(main_window_test, lists_explainable_anomaly_observations) {

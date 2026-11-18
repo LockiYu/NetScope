@@ -1510,12 +1510,19 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     row[4]->setData(QString::fromStdString(record.source), Qt::UserRole + 3);
     row[6]->setData(QString::fromStdString(record.destination), Qt::UserRole + 3);
     packet_model_->appendRow(row);
+    if (display_filter_.has_value()) {
+        if (auto* const table = qobject_cast<QTableView*>(packet_model_->parent());
+            table != nullptr) {
+            table->setRowHidden(
+                packet_model_->rowCount() - 1, !display_filter_->matches(record));
+        }
+    }
     if (const auto flow_id = flow_tracker_.ingest(packets_.back());
         flow_id.has_value()) {
         if (record.process.has_value()) {
             flow_process_[flow_id.value()] = record.process.value();
         }
-        refresh_flow_view();
+        schedule_view_refresh();
     }
     if (const auto datagram = ip_reassembler_.ingest(packets_.back());
         datagram.has_value()) {
@@ -1538,30 +1545,9 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
         anomaly_model_->appendRow(reassembly_row);
     }
     statistics_.ingest(packets_.back());
-    refresh_statistics_view();
-    auto alerts = anomaly_detector_.ingest(packets_.back());
-    const auto flow_alerts = anomaly_detector_.evaluate_flows(flow_tracker_.snapshot());
-    alerts.insert(alerts.end(), flow_alerts.begin(), flow_alerts.end());
-    for (const auto& alert : alerts) {
-        QString related;
-        if (alert.packet_number.has_value()) {
-            related = QStringLiteral("Packet %1").arg(
-                static_cast<qulonglong>(alert.packet_number.value()));
-        } else if (alert.flow_id.has_value()) {
-            related = QStringLiteral("Flow %1").arg(
-                static_cast<qulonglong>(alert.flow_id.value()));
-        }
-        QList<QStandardItem*> alert_row{
-            new QStandardItem{QString::fromStdString(alert.rule)},
-            new QStandardItem{QString::fromStdString(alert.title)},
-            new QStandardItem{QString::fromStdString(alert.evidence)},
-            new QStandardItem{related},
-        };
-        for (auto* const item : alert_row) {
-            item->setEditable(false);
-            item->setBackground(QColor{250, 225, 225});
-        }
-        anomaly_model_->appendRow(alert_row);
+    schedule_view_refresh();
+    for (const auto& alert : anomaly_detector_.ingest(packets_.back())) {
+        append_observation(alert);
     }
 
     const auto resolve_address = [this, stored_index](
@@ -1604,9 +1590,6 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
     };
     resolve_address(record.source, 4);
     resolve_address(record.destination, 6);
-    if (display_filter_.has_value()) {
-        apply_display_filter();
-    }
 }
 
 void main_window::load_pcap(const std::filesystem::path& path) {
@@ -1628,6 +1611,7 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     annotations_.clear();
     flow_process_.clear();
     known_process_names_.clear();
+    reported_flow_alerts_.clear();
     {
         const QSignalBlocker blocker{flow_process_filter_};
         flow_process_filter_->clear();
@@ -1934,13 +1918,63 @@ void main_window::apply_display_filter() {
         4000);
 }
 
+void main_window::schedule_view_refresh() {
+    if (view_refresh_pending_) {
+        return;
+    }
+    view_refresh_pending_ = true;
+    QTimer::singleShot(std::chrono::milliseconds{200}, this, [this] {
+        view_refresh_pending_ = false;
+        refresh_flow_view();
+        refresh_statistics_view();
+        refresh_flow_observations();
+    });
+}
+
+void main_window::refresh_flow_observations() {
+    for (const auto& alert : anomaly_detector_.evaluate_flows(flow_tracker_.summaries())) {
+        std::string key = alert.rule;
+        if (alert.flow_id.has_value()) {
+            key += "#flow:" + std::to_string(alert.flow_id.value());
+        } else {
+            key += "#packet:" + std::to_string(alert.packet_number.value_or(0));
+        }
+        if (!reported_flow_alerts_.insert(key).second) {
+            continue;
+        }
+        append_observation(alert);
+    }
+}
+
+void main_window::append_observation(const analysis::anomaly_alert& alert) {
+    QString related;
+    if (alert.packet_number.has_value()) {
+        related = QStringLiteral("Packet %1").arg(
+            static_cast<qulonglong>(alert.packet_number.value()));
+    } else if (alert.flow_id.has_value()) {
+        related = QStringLiteral("Flow %1").arg(
+            static_cast<qulonglong>(alert.flow_id.value()));
+    }
+    QList<QStandardItem*> alert_row{
+        new QStandardItem{QString::fromStdString(alert.rule)},
+        new QStandardItem{QString::fromStdString(alert.title)},
+        new QStandardItem{QString::fromStdString(alert.evidence)},
+        new QStandardItem{related},
+    };
+    for (auto* const item : alert_row) {
+        item->setEditable(false);
+        item->setBackground(QColor{250, 225, 225});
+    }
+    anomaly_model_->appendRow(alert_row);
+}
+
 void main_window::refresh_flow_view() {
     refresh_flow_process_filter();
     const bool sorting = flow_table_->isSortingEnabled();
     flow_table_->setSortingEnabled(false);
     flow_model_->removeRows(0, flow_model_->rowCount());
     const auto selected = flow_process_filter_->currentData().toString();
-    for (const auto& flow : flow_tracker_.snapshot()) {
+    for (const auto& flow : flow_tracker_.summaries()) {
         const auto process = flow_process_.find(flow.id);
         QString process_label;
         if (process != flow_process_.end()) {

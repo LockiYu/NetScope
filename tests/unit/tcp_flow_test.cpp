@@ -107,6 +107,34 @@ TEST(tcp_flow_test, reassembles_out_of_order_data_and_counts_retransmissions) {
         "Hello there World");
 }
 
+TEST(tcp_flow_test, summaries_report_metrics_without_payload_copies) {
+    netscope::packet::packet_repository repository{10U};
+    tcp_flow_tracker tracker;
+    const auto base = std::chrono::system_clock::time_point{};
+    const std::array<std::uint8_t, 4> client{10, 0, 0, 1};
+    const std::array<std::uint8_t, 4> server{10, 0, 0, 2};
+
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 101U, 0U, 0x18U, "Hello ", base)));
+    static_cast<void>(tracker.ingest(packet(
+        repository, client, server, 50000U, 80U, 107U, 0U, 0x18U, "world", base + 1ms)));
+
+    const auto full = tracker.snapshot();
+    ASSERT_EQ(full.size(), 1U);
+    EXPECT_FALSE(full.front().client_to_server_data.empty());
+    EXPECT_FALSE(full.front().packet_numbers.empty());
+
+    const auto summaries = tracker.summaries();
+    ASSERT_EQ(summaries.size(), 1U);
+    EXPECT_EQ(summaries.front().id, full.front().id);
+    EXPECT_EQ(summaries.front().packet_count, full.front().packet_count);
+    EXPECT_EQ(summaries.front().byte_count, full.front().byte_count);
+    EXPECT_EQ(summaries.front().state, full.front().state);
+    EXPECT_TRUE(summaries.front().client_to_server_data.empty());
+    EXPECT_TRUE(summaries.front().server_to_client_data.empty());
+    EXPECT_TRUE(summaries.front().packet_numbers.empty());
+}
+
 TEST(tcp_flow_test, tracks_fin_and_reset_terminal_states) {
     netscope::packet::packet_repository repository{10U};
     tcp_flow_tracker tracker;

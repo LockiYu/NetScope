@@ -97,6 +97,9 @@ private:
     void apply_display_filter();
     void refresh_flow_view();
     void refresh_flow_process_filter();
+    void refresh_flow_observations();
+    void schedule_view_refresh();
+    void append_observation(const analysis::anomaly_alert& alert);
     void refresh_statistics_view();
     void start_process_refresh();
     void stop_process_refresh();
@@ -137,6 +140,8 @@ private:
     analysis::process_tracker process_tracker_;
     std::map<std::uint64_t, packet::process_owner> flow_process_;
     std::set<std::string> known_process_names_;
+    std::set<std::string> reported_flow_alerts_;
+    bool view_refresh_pending_{false};
     std::thread process_worker_;
     std::mutex process_worker_mutex_;
     std::condition_variable process_worker_cv_;

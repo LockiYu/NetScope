@@ -55,6 +55,10 @@ public:
     [[nodiscard]] std::optional<std::uint64_t> ingest(
         std::shared_ptr<const packet::packet_record> packet);
     [[nodiscard]] std::vector<tcp_flow_snapshot> snapshot() const;
+
+    // Scalar flow metrics without reassembled payload or packet numbers. Safe
+    // to call for every UI refresh without copying captured bytes.
+    [[nodiscard]] std::vector<tcp_flow_snapshot> summaries() const;
     void clear();
 
 private:
