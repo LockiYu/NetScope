@@ -46,6 +46,7 @@
 #include <QTableView>
 #include <QToolBar>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QTextCursor>
 #include <QTextEdit>
 #include <QThread>
@@ -450,6 +451,9 @@ main_window::main_window(
         QStringLiteral("tcp and ip.src == 192.168.1.1"));
     display_filter_edit_->setClearButtonEnabled(true);
     display_filter_edit_->setMinimumWidth(280);
+    display_filter_edit_->setToolTip(QStringLiteral(
+        "Field names follow the packet tree (for example dns.query_name, udp.port, "
+        "ip.addr, tcp.flags.syn)."));
     toolbar->addWidget(display_filter_edit_);
 
     auto* const workspace = new QSplitter{Qt::Vertical, this};
@@ -491,6 +495,7 @@ main_window::main_window(
     protocol_tree_->setHeaderLabels({QStringLiteral("Field"), QStringLiteral("Value")});
     protocol_tree_->setAlternatingRowColors(true);
     protocol_tree_->header()->setStretchLastSection(true);
+    protocol_tree_->setColumnWidth(0, 240);
     protocol_tree_->headerItem()->setToolTip(
         0, QStringLiteral("Click a field to highlight its bytes"));
 
@@ -1826,6 +1831,17 @@ void main_window::set_packet_annotation(
     }
 }
 
+void main_window::expand_protocol_nodes() {
+    const QSignalBlocker blocker{protocol_tree_};
+    for (QTreeWidgetItemIterator iterator{protocol_tree_}; *iterator != nullptr; ++iterator) {
+        auto* const item = *iterator;
+        if (item->data(0, Qt::UserRole + 2).toBool() || item->childCount() == 0) {
+            continue;
+        }
+        item->setExpanded(true);
+    }
+}
+
 void main_window::synchronize_tree_selection(QTreeWidgetItem* const item) {
     if (item == nullptr || byte_hex_positions_.empty()) {
         return;
@@ -1864,11 +1880,11 @@ void main_window::show_packet(const std::size_t index) {
     displayed_packet_index_ = index;
     protocol_tree_->clear();
     add_protocol_node(protocol_tree_, nullptr, record.analysis);
-    protocol_tree_->expandToDepth(1);
     auto formatted = format_hex(record.capture.packet.bytes);
     byte_hex_positions_ = std::move(formatted.byte_positions);
     hex_view_->setPlainText(formatted.text);
     hex_view_->setExtraSelections({});
+    expand_protocol_nodes();
     current_byte_offset_.reset();
     offset_spin_->setRange(
         0,
@@ -2118,6 +2134,14 @@ void main_window::apply_display_filter() {
         if (matches) {
             ++visible;
         }
+    }
+    if (visible == 0U && !display_filter_edit_->text().trimmed().isEmpty()) {
+        statusBar()->showMessage(
+            QStringLiteral(
+                "Display filter matched no packets. Check the field name; examples: "
+                "dns.qry.name, dns.id, udp.port, tcp.port, ip.addr, tcp.flags.syn."),
+            8000);
+        return;
     }
     statusBar()->showMessage(
         QStringLiteral("Display filter: %1 of %2 packet(s)")

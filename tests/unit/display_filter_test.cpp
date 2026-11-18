@@ -32,6 +32,38 @@ std::shared_ptr<const netscope::packet::packet_record> tcp_record() {
     });
 }
 
+std::shared_ptr<const netscope::packet::packet_record> dns_record() {
+    const std::vector<std::uint8_t> dns{
+        0x4d, 0x0f, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        7, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+        3, 'c', 'o', 'm', 0,
+        0x00, 0x01, 0x00, 0x01,
+    };
+    const auto udp_length = static_cast<std::uint16_t>(8U + dns.size());
+    const auto total_length = static_cast<std::uint16_t>(20U + udp_length);
+    std::vector<std::uint8_t> bytes{
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 0x08, 0x00,
+        0x45, 0, static_cast<std::uint8_t>(total_length >> 8U),
+        static_cast<std::uint8_t>(total_length), 0, 2, 0x40, 0, 64, 17, 0, 0,
+        192, 168, 1, 10, 8, 8, 8, 8,
+        0x14, 0xe9, 0x14, 0xe9,
+        static_cast<std::uint8_t>(udp_length >> 8U),
+        static_cast<std::uint8_t>(udp_length),
+        0, 0,
+    };
+    bytes.insert(bytes.end(), dns.begin(), dns.end());
+    netscope::packet::packet_repository repository{1U};
+    return repository.append(netscope::capture::merged_packet{
+        netscope::capture::captured_packet{
+            std::chrono::system_clock::now(),
+            static_cast<std::uint32_t>(bytes.size()),
+            static_cast<std::uint32_t>(bytes.size()),
+            std::move(bytes),
+        },
+        {"en0"},
+    });
+}
+
 using netscope::analysis::display_filter;
 using netscope::analysis::filter_error;
 
@@ -43,6 +75,33 @@ TEST(display_filter_test, matches_protocol_presence_and_common_fields) {
     EXPECT_TRUE(display_filter{"tcp.dstport == 80"}.matches(*packet));
     EXPECT_FALSE(display_filter{"udp"}.matches(*packet));
     EXPECT_FALSE(display_filter{"ip.dst == 1.1.1.1"}.matches(*packet));
+}
+
+TEST(display_filter_test, supports_wireshark_style_field_aliases) {
+    const auto dns = dns_record();
+    EXPECT_TRUE(display_filter{"dns"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns.qry.name"}.matches(*dns));
+    EXPECT_FALSE(display_filter{"dns.qry.name"}.matches(*tcp_record()));
+    EXPECT_TRUE(display_filter{"dns.qry.name == \"example.com\""}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns.id == \"0x4d0f\""}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns.flags.response == 0"}.matches(*dns));
+    EXPECT_FALSE(display_filter{"dns.flags.response == 1"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"udp.port == 5353"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"ip.addr == 192.168.1.10"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"ip.addr == 8.8.8.8"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns.qry.name contains \"example\""}.matches(*dns));
+    EXPECT_TRUE(display_filter{"frame contains \"example\""}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns contains \"example\""}.matches(*dns));
+    EXPECT_TRUE(display_filter{"udp contains \"example\""}.matches(*dns));
+    EXPECT_FALSE(display_filter{"frame contains \"nomatch\""}.matches(*dns));
+
+    const auto tcp = tcp_record();
+    EXPECT_TRUE(display_filter{"tcp.port == 80"}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"tcp.port == 1234"}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"tcp.flags.syn == 1"}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"tcp.flags.ack == 0"}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"eth.src contains \"06:07\""}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"eth.addr contains \"0a:0b\""}.matches(*tcp));
 }
 
 TEST(display_filter_test, supports_logic_parentheses_strings_and_numbers) {

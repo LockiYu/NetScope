@@ -92,6 +92,7 @@ public:
 private:
     void show_packet(std::size_t index);
     void synchronize_tree_selection(QTreeWidgetItem* item);
+    void expand_protocol_nodes();
     void select_byte_range(std::size_t offset, std::size_t length, bool notify);
     void update_integer_value(std::size_t offset);
     void enqueue_captured_packet(capture::interface_packet packet);

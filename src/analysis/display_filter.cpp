@@ -181,6 +181,21 @@ std::vector<std::string> resolve_values(
             }
             return {packet.process->name, std::to_string(packet.process->pid)};
         }
+        // Wireshark-compatible "frame contains" and "<protocol> contains"
+        // search the raw bytes of the frame or of the matching protocol layer.
+        const auto& bytes = packet.capture.packet.bytes;
+        if (identifier == "frame") {
+            return {std::string{bytes.begin(), bytes.end()}};
+        }
+        if (const auto* node = find_node(packet.analysis, identifier); node != nullptr) {
+            if (node->bytes.offset < bytes.size()) {
+                const auto available = bytes.size() - node->bytes.offset;
+                const auto length = std::min(node->bytes.length, available);
+                return {std::string{
+                    bytes.begin() + static_cast<std::ptrdiff_t>(node->bytes.offset),
+                    bytes.begin() + static_cast<std::ptrdiff_t>(node->bytes.offset + length)}};
+            }
+        }
         return {};
     }
     const auto prefix = lowercase(identifier.substr(0U, dot));
@@ -208,6 +223,114 @@ std::vector<std::string> resolve_values(
     if ((prefix == "ip" || prefix == "ipv4" || prefix == "ipv6") && suffix == "dst") {
         return {packet.destination};
     }
+    if ((prefix == "ip" || prefix == "ipv4" || prefix == "ipv6") &&
+        (suffix == "addr" || suffix == "host")) {
+        return {packet.source, packet.destination};
+    }
+    if ((prefix == "tcp" || prefix == "udp") && suffix == "port") {
+        const auto* transport = find_node(packet.analysis, prefix);
+        if (transport == nullptr) {
+            return {};
+        }
+        std::vector<std::string> ports;
+        for (const auto* const name : {"source_port", "destination_port"}) {
+            if (const auto* field = find_field(*transport, name); field != nullptr) {
+                if (!field->raw_value.empty()) {
+                    ports.push_back(field->raw_value);
+                }
+                ports.push_back(field->display_value);
+            }
+        }
+        return ports;
+    }
+    if (prefix == "tcp" && suffix.rfind("flags.", 0U) == 0U) {
+        const auto* tcp = find_node(packet.analysis, "tcp");
+        const auto* flags = tcp == nullptr ? nullptr : find_field(*tcp, "flags");
+        if (flags == nullptr) {
+            return {};
+        }
+        const auto text = lowercase(flags->display_value);
+        const auto flag = suffix.substr(6U);
+        const bool set = text.find(flag) != std::string::npos;
+        return {set ? "1" : "0"};
+    }
+    if (prefix == "eth" &&
+        (suffix == "src" || suffix == "dst" || suffix == "addr")) {
+        const auto* ethernet = find_node(packet.analysis, "eth");
+        if (ethernet == nullptr) {
+            return {};
+        }
+        const auto* source = find_field(*ethernet, "source");
+        const auto* destination = find_field(*ethernet, "destination");
+        std::vector<std::string> addresses;
+        if (suffix != "dst" && source != nullptr) {
+            addresses.push_back(source->display_value);
+        }
+        if (suffix != "src" && destination != nullptr) {
+            addresses.push_back(destination->display_value);
+        }
+        return addresses;
+    }
+    if (prefix == "dns") {
+        const auto* dns = find_node(packet.analysis, "dns");
+        if (dns == nullptr) {
+            return {};
+        }
+        std::string field_name;
+        if (suffix == "qry.name") field_name = "query_name";
+        if (suffix == "qry.type") field_name = "query_type";
+        if (suffix == "id") field_name = "transaction_id";
+        if (suffix == "count.queries") field_name = "question_count";
+        if (suffix == "count.answers") field_name = "answer_count";
+        if (suffix == "flags.response") {
+            const auto* flags = find_field(*dns, "flags");
+            if (flags == nullptr) {
+                return {};
+            }
+            return {lowercase(flags->display_value) == "response" ? "1" : "0"};
+        }
+        if (!field_name.empty()) {
+            const auto* field = find_field(*dns, field_name);
+            if (field == nullptr) {
+                return {};
+            }
+            return {field->display_value};
+        }
+    }
+    if (prefix == "http") {
+        const auto* http = find_node(packet.analysis, "http");
+        if (http == nullptr) {
+            return {};
+        }
+        std::string field_name;
+        if (suffix == "host") field_name = "host";
+        if (suffix == "request.method") field_name = "method";
+        if (suffix == "request.uri") field_name = "request_uri";
+        if (suffix == "response.code") field_name = "status_code";
+        if (!field_name.empty()) {
+            const auto* field = find_field(*http, field_name);
+            if (field == nullptr) {
+                return {};
+            }
+            return {field->display_value};
+        }
+    }
+    if (prefix == "tls") {
+        const auto* tls = find_node(packet.analysis, "tls");
+        if (tls == nullptr) {
+            return {};
+        }
+        std::string field_name;
+        if (suffix == "handshake.extensions_server_name") field_name = "server_name";
+        if (suffix == "handshake.type") field_name = "handshake_type";
+        if (!field_name.empty()) {
+            const auto* field = find_field(*tls, field_name);
+            if (field == nullptr) {
+                return {};
+            }
+            return {field->display_value};
+        }
+    }
 
     const auto* node = find_node(packet.analysis, prefix);
     if (node == nullptr) {
@@ -229,6 +352,10 @@ bool protocol_present(const packet::packet_record& packet, const std::string& id
     }
     if (identifier == "process" || identifier == "proc") {
         return packet.process.has_value();
+    }
+    if (identifier.find('.') != std::string::npos) {
+        // A bare field name means "this field is present", as in Wireshark.
+        return !resolve_values(packet, identifier).empty();
     }
     return find_node(packet.analysis, lowercase(identifier)) != nullptr;
 }

@@ -8,6 +8,7 @@ NetScope 是一款面向 macOS 的独立网络嗅探与协议分析工具。项�
 - 提供标准三窗格数据包浏览器，列支持排序、移动、隐藏、调整宽度和持久化。
 - 解析 Ethernet II、堆叠 VLAN、ARP、IPv4、IPv6 扩展头、TCP、UDP、ICMP、ICMPv6、DNS、DHCP、HTTP 元数据和 TLS ClientHello 元数据。
 - 支持带逻辑运算符和字段比较的显示过滤表达式，以及 DNS 反向解析、协议着色、标记、备注、字节搜索、字节范围联动和整数解释。
+- 显示过滤同时接受 Wireshark 风格别名：`tcp.port`、`udp.port`、`ip.addr`、`eth.addr`、`dns.qry.name`、`dns.id`、`dns.flags.response`、`tcp.flags.syn`、`frame contains "..."` 等，并支持字段存在性判断。
 - 支持 IPv4/IPv6 分片重组、TCP 流跟踪与字节流重组、RTT 和重传指标、时序图、流量统计、可解释观察和可配置阈值。
 - 支持实时抓包的进程归属：macOS `libproc` 将 TCP/UDP 五元组映射到所属进程，数据包和流视图可显示归属结果，并可按进程过滤流。显示过滤器同时支持 `process` 和 `proc` 字段。
 - 支持 PCAP 打开与保存、过滤后数据包导出、TCP 流导出、协议树 JSON 导出和两个数据包的字段对比。

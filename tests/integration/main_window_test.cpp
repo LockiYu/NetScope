@@ -502,6 +502,31 @@ TEST(main_window_test, reports_selected_field_byte_range_in_the_status_bar) {
     EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("bytes")));
 }
 
+TEST(main_window_test, expands_every_protocol_node_when_a_packet_is_shown) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string&) -> std::optional<std::string> { return std::nullopt; }};
+    auto* const tree = window.findChild<QTreeWidget*>(QStringLiteral("protocolTree"));
+    auto* const hex = window.findChild<QPlainTextEdit*>(QStringLiteral("hexView"));
+    ASSERT_NE(tree, nullptr);
+    ASSERT_NE(hex, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+
+    auto* const ipv4 = find_item(tree, QStringLiteral("Internet Protocol Version 4"));
+    auto* const tcp = find_item(tree, QStringLiteral("Transmission Control Protocol"));
+    ASSERT_NE(ipv4, nullptr);
+    ASSERT_NE(tcp, nullptr);
+    EXPECT_TRUE(ipv4->isExpanded());
+    EXPECT_TRUE(tcp->isExpanded());
+    // Automatic expansion must not run the byte-range synchronisation.
+    EXPECT_TRUE(hex->extraSelections().isEmpty());
+}
+
 TEST(main_window_test, synchronizes_bytes_when_a_tree_node_is_expanded) {
     netscope::ui::main_window window{
         [](const std::string& name, const netscope::capture::capture_options&) {
@@ -521,6 +546,8 @@ TEST(main_window_test, synchronizes_bytes_when_a_tree_node_is_expanded) {
     auto* const ipv4 = find_item(tree, QStringLiteral("Internet Protocol Version 4"));
     ASSERT_NE(ipv4, nullptr);
 
+    tree->collapseItem(ipv4);
+    QApplication::processEvents();
     tree->expandItem(ipv4);
     QApplication::processEvents();
 
