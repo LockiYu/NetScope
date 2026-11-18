@@ -24,6 +24,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
@@ -500,6 +501,38 @@ TEST(main_window_test, reports_selected_field_byte_range_in_the_status_bar) {
 
     EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("source_address")));
     EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("bytes")));
+}
+
+TEST(main_window_test, destroys_the_window_quickly_while_a_lookup_is_blocked) {
+    struct gate {
+        std::atomic<bool> entered{false};
+        std::atomic<bool> release{false};
+    };
+    auto state = std::make_shared<gate>();
+    const auto started = std::chrono::steady_clock::now();
+    {
+        netscope::ui::main_window window{
+            [](const std::string& name, const netscope::capture::capture_options&) {
+                return netscope::capture::capture_session{
+                    std::make_unique<ui_packet_backend>(), name};
+            },
+            [state](const std::string&) -> std::optional<std::string> {
+                state->entered.store(true);
+                while (!state->release.load()) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+                }
+                return std::nullopt;
+            }};
+        window.append_packet(make_record());
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds{1};
+        while (!state->entered.load() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds{1});
+        }
+        ASSERT_TRUE(state->entered.load());
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    state->release.store(true);
+    EXPECT_LT(elapsed, std::chrono::seconds{2});
 }
 
 TEST(main_window_test, expands_every_protocol_node_when_a_packet_is_shown) {

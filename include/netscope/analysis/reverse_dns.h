@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -39,22 +40,11 @@ public:
         const std::string& address);
 
 private:
-    struct cache_entry {
-        std::optional<std::string> hostname;
-        std::chrono::steady_clock::time_point expires_at;
-    };
+    struct shared_state;
 
-    void worker_loop();
+    static void worker_loop(std::shared_ptr<shared_state> state);
 
-    lookup lookup_;
-    std::chrono::seconds positive_ttl_;
-    std::chrono::seconds negative_ttl_;
-    std::mutex mutex_;
-    std::condition_variable condition_;
-    bool stopping_{false};
-    std::deque<std::string> queue_;
-    std::unordered_map<std::string, cache_entry> cache_;
-    std::unordered_map<std::string, std::vector<callback>> pending_;
+    std::shared_ptr<shared_state> state_;
     std::vector<std::thread> workers_;
 };
 

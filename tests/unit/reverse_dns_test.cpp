@@ -5,9 +5,11 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -85,6 +87,71 @@ TEST(reverse_dns_test, negatively_caches_failed_lookups) {
         ASSERT_TRUE(ready.wait_for(lock, 1s, [&] { return callbacks == 2; }));
     }
     EXPECT_EQ(lookups.load(), 1);
+}
+
+TEST(reverse_dns_test, destruction_does_not_wait_for_a_blocked_lookup) {
+    struct gate {
+        std::atomic<bool> entered{false};
+        std::atomic<bool> release{false};
+    };
+    auto state = std::make_shared<gate>();
+    auto resolver = std::make_unique<reverse_dns_resolver>(
+        [state](const std::string&) -> std::optional<std::string> {
+            state->entered.store(true);
+            while (!state->release.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{5});
+            }
+            return std::nullopt;
+        });
+    resolver->resolve(
+        "10.0.0.1", [](const std::string&, std::optional<std::string>) {});
+
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (!state->entered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    ASSERT_TRUE(state->entered.load());
+
+    const auto started = std::chrono::steady_clock::now();
+    resolver.reset();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    state->release.store(true);
+
+    EXPECT_LT(elapsed, 1s);
+}
+
+TEST(reverse_dns_test, drops_callbacks_after_destruction_started) {
+    struct gate {
+        std::atomic<bool> entered{false};
+        std::atomic<bool> release{false};
+        std::atomic<int> callbacks{0};
+    };
+    auto state = std::make_shared<gate>();
+    auto resolver = std::make_unique<reverse_dns_resolver>(
+        [state](const std::string&) -> std::optional<std::string> {
+            state->entered.store(true);
+            while (!state->release.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds{5});
+            }
+            return std::nullopt;
+        });
+    resolver->resolve(
+        "10.0.0.2",
+        [state](const std::string&, std::optional<std::string>) {
+            ++state->callbacks;
+        });
+
+    const auto deadline = std::chrono::steady_clock::now() + 1s;
+    while (!state->entered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    ASSERT_TRUE(state->entered.load());
+
+    resolver.reset();
+    state->release.store(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds{50});
+
+    EXPECT_EQ(state->callbacks.load(), 0);
 }
 
 TEST(reverse_dns_test, rejects_empty_addresses) {
