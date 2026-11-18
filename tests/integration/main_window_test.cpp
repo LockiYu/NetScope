@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -181,6 +182,70 @@ public:
 private:
     bool delivered_{false};
 };
+
+class burst_backend final : public netscope::capture::capture_backend {
+public:
+    explicit burst_backend(const std::size_t packets) : remaining_{packets} {}
+
+    std::optional<netscope::capture::captured_packet> next_packet() override {
+        if (remaining_ == 0U) {
+            return std::nullopt;
+        }
+        --remaining_;
+        ++delivered_;
+        auto bytes = sample_bytes();
+        bytes.push_back(static_cast<std::uint8_t>(delivered_ & 0xFFU));
+        const auto length = static_cast<std::uint32_t>(bytes.size());
+        return netscope::capture::captured_packet{
+            std::chrono::system_clock::now() + std::chrono::microseconds{delivered_},
+            length,
+            length,
+            std::move(bytes),
+        };
+    }
+
+    void break_capture() noexcept override {}
+    netscope::capture::capture_statistics statistics() const override { return {}; }
+
+private:
+    std::size_t remaining_;
+    std::uint64_t delivered_{0};
+};
+
+TEST(main_window_test, stops_capture_when_the_retention_limit_is_reached) {
+    setenv("NETSCOPE_MAX_PACKETS", "300", 1);
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<burst_backend>(2000U), name};
+        },
+        [](const std::string&) -> std::optional<std::string> { return std::nullopt; }};
+    auto* const interfaces = window.findChild<QListWidget*>(QStringLiteral("interfaceList"));
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const start = window.findChild<QAction*>(QStringLiteral("startCaptureAction"));
+    auto* const stop = window.findChild<QAction*>(QStringLiteral("stopCaptureAction"));
+    auto* const status = window.findChild<QStatusBar*>();
+    ASSERT_NE(interfaces, nullptr);
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(start, nullptr);
+    ASSERT_NE(stop, nullptr);
+    ASSERT_NE(status, nullptr);
+    ASSERT_GT(interfaces->count(), 0);
+    for (int index = 0; index < interfaces->count(); ++index) {
+        interfaces->item(index)->setCheckState(index == 0 ? Qt::Checked : Qt::Unchecked);
+    }
+
+    start->trigger();
+    const bool stopped = wait_for([&] {
+        return start->isEnabled() && !stop->isEnabled() &&
+            table->model()->rowCount() > 0;
+    }, std::chrono::milliseconds{10000});
+    unsetenv("NETSCOPE_MAX_PACKETS");
+
+    ASSERT_TRUE(stopped);
+    EXPECT_EQ(table->model()->rowCount(), 300);
+    EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("limit")));
+}
 
 TEST(main_window_test, provides_a_ready_application_shell) {
     netscope::ui::main_window window;
@@ -745,4 +810,3 @@ int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
 }
-

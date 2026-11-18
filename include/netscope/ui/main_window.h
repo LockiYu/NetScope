@@ -18,6 +18,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -93,7 +94,8 @@ private:
     void update_integer_value(std::size_t offset);
     void enqueue_captured_packet(capture::interface_packet packet);
     void drain_captured_packets(bool flush_all);
-    void stop_capture();
+    void process_pending_appends(bool unbounded);
+    void stop_capture(bool discard_pending = false);
     void apply_display_filter();
     void refresh_flow_view();
     void refresh_flow_process_filter();
@@ -149,8 +151,14 @@ private:
     capture::packet_merger packet_merger_;
     packet::packet_repository repository_{100000U};
     std::mutex captured_mutex_;
-    std::vector<capture::interface_packet> captured_pending_;
+    std::deque<capture::interface_packet> captured_pending_;
+    std::deque<capture::merged_packet> pending_appends_;
+    std::size_t dropped_by_ui_{0};
+    std::size_t reported_dropped_{0};
     std::atomic<bool> drain_scheduled_{false};
+    bool append_drain_scheduled_{false};
+    bool retention_limit_reached_{false};
+    bool retention_notice_shown_{false};
     bool merge_flush_scheduled_{false};
     std::optional<std::chrono::system_clock::time_point> latest_capture_time_;
     int current_snapshot_length_{262144};

@@ -62,12 +62,31 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace {
+
+constexpr auto append_time_budget = std::chrono::milliseconds{8};
+constexpr std::size_t append_batch_limit = 1024U;
+constexpr std::size_t ui_backlog_limit = 50000U;
+
+std::size_t retained_packet_limit() {
+    constexpr std::size_t fallback = 50000U;
+    const auto* const configured = std::getenv("NETSCOPE_MAX_PACKETS");
+    if (configured == nullptr) {
+        return fallback;
+    }
+    char* end{nullptr};
+    const auto value = std::strtoul(configured, &end, 10);
+    if (end == configured || *end != '\0' || value < 100U) {
+        return fallback;
+    }
+    return static_cast<std::size_t>(value);
+}
 
 QColor protocol_color(const std::string& protocol) {
     if (protocol == "TCP") {
@@ -1147,6 +1166,15 @@ main_window::main_window(
         try {
             latest_capture_time_.reset();
             packet_merger_ = capture::packet_merger{};
+            pending_appends_.clear();
+            retention_limit_reached_ = false;
+            retention_notice_shown_ = false;
+            {
+                const std::lock_guard lock{captured_mutex_};
+                captured_pending_.clear();
+                dropped_by_ui_ = 0U;
+                reported_dropped_ = 0U;
+            }
             const auto start_runner = [&] {
                 capture_runner_.start(
                     interfaces,
@@ -1626,6 +1654,15 @@ void main_window::load_pcap(const std::filesystem::path& path) {
             "; NetScope currently requires Ethernet"};
     }
 
+    pending_appends_.clear();
+    retention_limit_reached_ = false;
+    retention_notice_shown_ = false;
+    {
+        const std::lock_guard lock{captured_mutex_};
+        captured_pending_.clear();
+        dropped_by_ui_ = 0U;
+        reported_dropped_ = 0U;
+    }
     repository_.clear();
     flow_tracker_.clear();
     statistics_.clear();
@@ -1653,7 +1690,13 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     current_byte_offset_.reset();
     current_snapshot_length_ = contents.snapshot_length;
 
+    std::size_t truncated{0U};
     for (auto& packet : contents.packets) {
+        if (packets_.size() >= retained_packet_limit()) {
+            truncated = contents.packets.size() -
+                static_cast<std::size_t>(&packet - contents.packets.data());
+            break;
+        }
         append_packet(repository_.append(capture::merged_packet{
             std::move(packet),
             {"pcap"},
@@ -1661,10 +1704,19 @@ void main_window::load_pcap(const std::filesystem::path& path) {
     }
     setWindowTitle(
         QStringLiteral("NetScope — %1").arg(QString::fromStdString(path.filename().string())));
-    statusBar()->showMessage(
-        QStringLiteral("Loaded %1 packet(s)")
-            .arg(static_cast<qulonglong>(packets_.size())),
-        4000);
+    if (truncated != 0U) {
+        statusBar()->showMessage(
+            QStringLiteral("Loaded the first %1 packet(s); %2 more were skipped (limit %3).")
+                .arg(static_cast<qulonglong>(packets_.size()))
+                .arg(static_cast<qulonglong>(truncated))
+                .arg(static_cast<qulonglong>(retained_packet_limit())),
+            12000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("Loaded %1 packet(s)")
+                .arg(static_cast<qulonglong>(packets_.size())),
+            4000);
+    }
 }
 
 void main_window::save_pcap(const std::filesystem::path& path) const {
@@ -1846,6 +1898,10 @@ void main_window::enqueue_captured_packet(capture::interface_packet packet) {
     bool schedule{false};
     {
         const std::lock_guard lock{captured_mutex_};
+        if (captured_pending_.size() >= ui_backlog_limit) {
+            captured_pending_.pop_front();
+            ++dropped_by_ui_;
+        }
         captured_pending_.push_back(std::move(packet));
         if (!drain_scheduled_.exchange(true)) {
             schedule = true;
@@ -1860,7 +1916,7 @@ void main_window::enqueue_captured_packet(capture::interface_packet packet) {
 }
 
 void main_window::drain_captured_packets(const bool flush_all) {
-    std::vector<capture::interface_packet> pending;
+    std::deque<capture::interface_packet> pending;
     {
         const std::lock_guard lock{captured_mutex_};
         pending.swap(captured_pending_);
@@ -1881,9 +1937,25 @@ void main_window::drain_captured_packets(const bool flush_all) {
         ready = packet_merger_.drain_ready(latest_capture_time_.value());
     }
     for (auto& packet : ready) {
-        const auto owner = process_tracker_.lookup(packet.packet);
-        append_packet(repository_.append(std::move(packet), owner));
+        pending_appends_.push_back(std::move(packet));
     }
+
+    const auto dropped = [this] {
+        const std::lock_guard lock{captured_mutex_};
+        return dropped_by_ui_;
+    }();
+    if (dropped != reported_dropped_) {
+        reported_dropped_ = dropped;
+        statusBar()->showMessage(
+            QStringLiteral(
+                "Interface backlog overflow: %1 packet(s) dropped. "
+                "Use a capture filter or fewer interfaces.")
+                .arg(static_cast<qulonglong>(dropped)),
+            8000);
+    }
+
+    process_pending_appends(false);
+
     if (!flush_all && packet_merger_.pending_count() != 0U &&
         !merge_flush_scheduled_) {
         merge_flush_scheduled_ = true;
@@ -1894,17 +1966,91 @@ void main_window::drain_captured_packets(const bool flush_all) {
     }
 }
 
-void main_window::stop_capture() {
+void main_window::process_pending_appends(const bool unbounded) {
+    const auto deadline = std::chrono::steady_clock::now() + append_time_budget;
+    std::size_t processed{0U};
+    while (!pending_appends_.empty()) {
+        if (!unbounded &&
+            (processed >= append_batch_limit ||
+             std::chrono::steady_clock::now() >= deadline)) {
+            break;
+        }
+        auto packet = std::move(pending_appends_.front());
+        pending_appends_.pop_front();
+        const auto owner = process_tracker_.lookup(packet.packet);
+        append_packet(repository_.append(std::move(packet), owner));
+        ++processed;
+
+        if (!retention_limit_reached_ &&
+            packets_.size() >= retained_packet_limit() * 9U / 10U &&
+            !retention_notice_shown_) {
+            retention_notice_shown_ = true;
+            statusBar()->showMessage(
+                QStringLiteral(
+                    "Captured %1 packets; capture will stop at %2 to protect memory.")
+                    .arg(static_cast<qulonglong>(packets_.size()))
+                    .arg(static_cast<qulonglong>(retained_packet_limit())),
+                8000);
+        }
+        if (!retention_limit_reached_ && capture_runner_.running() &&
+            packets_.size() >= retained_packet_limit()) {
+            retention_limit_reached_ = true;
+            QTimer::singleShot(0, this, [this] {
+                if (capture_runner_.running()) {
+                    stop_capture(true);
+                }
+            });
+            break;
+        }
+    }
+    if (!unbounded && !retention_limit_reached_ && !pending_appends_.empty() &&
+        !append_drain_scheduled_) {
+        append_drain_scheduled_ = true;
+        // Yield to the event loop (input, paint, timers) between batches so the
+        // window stays responsive while a backlog is being drained.
+        QTimer::singleShot(1, this, [this] {
+            append_drain_scheduled_ = false;
+            process_pending_appends(false);
+        });
+    }
+}
+
+void main_window::stop_capture(const bool discard_pending) {
     stop_process_refresh();
     capture_runner_.stop();
-    drain_captured_packets(true);
+    std::size_t discarded{0U};
+    if (discard_pending) {
+        {
+            const std::lock_guard lock{captured_mutex_};
+            discarded = captured_pending_.size();
+            captured_pending_.clear();
+            drain_scheduled_.store(false);
+        }
+        discarded += pending_appends_.size();
+        pending_appends_.clear();
+        packet_merger_ = capture::packet_merger{};
+        merge_flush_scheduled_ = false;
+    } else {
+        drain_captured_packets(true);
+        process_pending_appends(true);
+    }
     start_action_->setEnabled(true);
     pause_action_->setEnabled(false);
     pause_action_->setText(QStringLiteral("Pause"));
     stop_action_->setEnabled(false);
-    statusBar()->showMessage(
-        QStringLiteral("Capture stopped — %1 packet(s)")
-            .arg(static_cast<qulonglong>(repository_.size())));
+    if (discard_pending) {
+        statusBar()->showMessage(
+            QStringLiteral(
+                "Packet limit reached: stopped with %1 packet(s) retained; "
+                "%2 pending packet(s) were discarded. Export and start again.")
+                .arg(static_cast<qulonglong>(packets_.size()))
+                .arg(static_cast<qulonglong>(discarded)),
+            15000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("Capture stopped — %1 packet(s)")
+                .arg(static_cast<qulonglong>(repository_.size())));
+    }
 }
 
 void main_window::apply_display_filter() {
