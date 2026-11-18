@@ -47,6 +47,7 @@
 #include <QToolBar>
 #include <QTreeWidget>
 #include <QTextCursor>
+#include <QTextEdit>
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -490,6 +491,8 @@ main_window::main_window(
     protocol_tree_->setHeaderLabels({QStringLiteral("Field"), QStringLiteral("Value")});
     protocol_tree_->setAlternatingRowColors(true);
     protocol_tree_->header()->setStretchLastSection(true);
+    protocol_tree_->headerItem()->setToolTip(
+        0, QStringLiteral("Click a field to highlight its bytes"));
 
     auto* const hex_panel = new QWidget{details};
     auto* const hex_layout = new QVBoxLayout{hex_panel};
@@ -976,34 +979,29 @@ main_window::main_window(
         protocol_tree_,
         &QTreeWidget::currentItemChanged,
         this,
-        [this](QTreeWidgetItem* const current) {
-            if (current == nullptr || byte_hex_positions_.empty()) {
-                return;
-            }
-            const auto offset = static_cast<std::size_t>(
-                current->data(0, Qt::UserRole).toULongLong());
-            const auto length = static_cast<std::size_t>(
-                current->data(0, Qt::UserRole + 1).toULongLong());
-            const auto name = current->text(0);
-            if (length == 0U) {
-                statusBar()->showMessage(
-                    QStringLiteral("%1 has no byte range").arg(name), 3000);
-                return;
-            }
-            if (offset >= byte_hex_positions_.size() ||
-                length > byte_hex_positions_.size() - offset) {
-                statusBar()->showMessage(
-                    QStringLiteral("%1 lies outside the captured bytes").arg(name), 3000);
-                return;
-            }
-            select_byte_range(offset, length, false);
-            statusBar()->showMessage(
-                QStringLiteral("%1: bytes %2 to %3 (%4 byte(s))")
-                    .arg(name)
-                    .arg(static_cast<qulonglong>(offset))
-                    .arg(static_cast<qulonglong>(offset + length - 1U))
-                    .arg(static_cast<qulonglong>(length)),
-                4000);
+        [this](QTreeWidgetItem* const current, QTreeWidgetItem*) {
+            synchronize_tree_selection(current);
+        });
+    connect(
+        protocol_tree_,
+        &QTreeWidget::itemClicked,
+        this,
+        [this](QTreeWidgetItem* const item, int) {
+            synchronize_tree_selection(item);
+        });
+    connect(
+        protocol_tree_,
+        &QTreeWidget::itemExpanded,
+        this,
+        [this](QTreeWidgetItem* const item) {
+            synchronize_tree_selection(item);
+        });
+    connect(
+        protocol_tree_,
+        &QTreeWidget::itemCollapsed,
+        this,
+        [this](QTreeWidgetItem* const item) {
+            synchronize_tree_selection(item);
         });
 
     connect(
@@ -1566,6 +1564,12 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
             // Show the first captured packet immediately so that the protocol
             // tree and the byte view are populated without an extra click.
             table->selectRow(packet_model_->rowCount() - 1);
+            statusBar()->showMessage(
+                QStringLiteral(
+                    "Packet %1 selected — click a field in the protocol tree to "
+                    "highlight its bytes.")
+                    .arg(QString::number(record.number)),
+                6000);
         }
     }
     if (const auto flow_id = flow_tracker_.ingest(packets_.back());
@@ -1822,6 +1826,36 @@ void main_window::set_packet_annotation(
     }
 }
 
+void main_window::synchronize_tree_selection(QTreeWidgetItem* const item) {
+    if (item == nullptr || byte_hex_positions_.empty()) {
+        return;
+    }
+    const auto offset = static_cast<std::size_t>(
+        item->data(0, Qt::UserRole).toULongLong());
+    const auto length = static_cast<std::size_t>(
+        item->data(0, Qt::UserRole + 1).toULongLong());
+    const auto name = item->text(0);
+    if (length == 0U) {
+        statusBar()->showMessage(
+            QStringLiteral("%1 has no byte range").arg(name), 3000);
+        return;
+    }
+    if (offset >= byte_hex_positions_.size() ||
+        length > byte_hex_positions_.size() - offset) {
+        statusBar()->showMessage(
+            QStringLiteral("%1 lies outside the captured bytes").arg(name), 3000);
+        return;
+    }
+    select_byte_range(offset, length, false);
+    statusBar()->showMessage(
+        QStringLiteral("%1: bytes %2 to %3 (%4 byte(s))")
+            .arg(name)
+            .arg(static_cast<qulonglong>(offset))
+            .arg(static_cast<qulonglong>(offset + length - 1U))
+            .arg(static_cast<qulonglong>(length)),
+        4000);
+}
+
 void main_window::show_packet(const std::size_t index) {
     if (index >= packets_.size()) {
         return;
@@ -1834,6 +1868,7 @@ void main_window::show_packet(const std::size_t index) {
     auto formatted = format_hex(record.capture.packet.bytes);
     byte_hex_positions_ = std::move(formatted.byte_positions);
     hex_view_->setPlainText(formatted.text);
+    hex_view_->setExtraSelections({});
     current_byte_offset_.reset();
     offset_spin_->setRange(
         0,
@@ -1861,6 +1896,10 @@ void main_window::select_byte_range(
         byte_hex_positions_[offset + length - 1U] + 2,
         QTextCursor::KeepAnchor);
     hex_view_->setTextCursor(cursor);
+    QTextEdit::ExtraSelection highlight;
+    highlight.cursor = cursor;
+    highlight.format.setBackground(QColor{255, 224, 130});
+    hex_view_->setExtraSelections({highlight});
     hex_view_->ensureCursorVisible();
     current_byte_offset_ = offset;
     offset_spin_->setValue(static_cast<int>(offset));

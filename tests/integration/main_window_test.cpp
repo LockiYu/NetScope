@@ -502,6 +502,33 @@ TEST(main_window_test, reports_selected_field_byte_range_in_the_status_bar) {
     EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("bytes")));
 }
 
+TEST(main_window_test, synchronizes_bytes_when_a_tree_node_is_expanded) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string&) -> std::optional<std::string> { return std::nullopt; }};
+    auto* const tree = window.findChild<QTreeWidget*>(QStringLiteral("protocolTree"));
+    auto* const hex = window.findChild<QPlainTextEdit*>(QStringLiteral("hexView"));
+    auto* const status = window.findChild<QStatusBar*>();
+    ASSERT_NE(tree, nullptr);
+    ASSERT_NE(hex, nullptr);
+    ASSERT_NE(status, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+    auto* const ipv4 = find_item(tree, QStringLiteral("Internet Protocol Version 4"));
+    ASSERT_NE(ipv4, nullptr);
+
+    tree->expandItem(ipv4);
+    QApplication::processEvents();
+
+    EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("Internet Protocol Version 4")));
+    EXPECT_TRUE(hex->textCursor().hasSelection());
+    EXPECT_FALSE(hex->extraSelections().isEmpty());
+}
+
 TEST(main_window_test, applies_active_display_filter_to_new_packets_only) {
     netscope::ui::main_window window{
         [](const std::string& name, const netscope::capture::capture_options&) {

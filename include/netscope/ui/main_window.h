@@ -40,6 +40,7 @@ class QStandardItemModel;
 class QSpinBox;
 class QTableView;
 class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace netscope::packet {
 struct packet_record;
@@ -90,6 +91,7 @@ public:
 
 private:
     void show_packet(std::size_t index);
+    void synchronize_tree_selection(QTreeWidgetItem* item);
     void select_byte_range(std::size_t offset, std::size_t length, bool notify);
     void update_integer_value(std::size_t offset);
     void enqueue_captured_packet(capture::interface_packet packet);
