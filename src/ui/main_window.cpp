@@ -965,11 +965,26 @@ main_window::main_window(
                 current->data(0, Qt::UserRole).toULongLong());
             const auto length = static_cast<std::size_t>(
                 current->data(0, Qt::UserRole + 1).toULongLong());
-            if (length == 0U || offset >= byte_hex_positions_.size() ||
+            const auto name = current->text(0);
+            if (length == 0U) {
+                statusBar()->showMessage(
+                    QStringLiteral("%1 has no byte range").arg(name), 3000);
+                return;
+            }
+            if (offset >= byte_hex_positions_.size() ||
                 length > byte_hex_positions_.size() - offset) {
+                statusBar()->showMessage(
+                    QStringLiteral("%1 lies outside the captured bytes").arg(name), 3000);
                 return;
             }
             select_byte_range(offset, length, false);
+            statusBar()->showMessage(
+                QStringLiteral("%1: bytes %2 to %3 (%4 byte(s))")
+                    .arg(name)
+                    .arg(static_cast<qulonglong>(offset))
+                    .arg(static_cast<qulonglong>(offset + length - 1U))
+                    .arg(static_cast<qulonglong>(length)),
+                4000);
         });
 
     connect(
@@ -1515,6 +1530,14 @@ void main_window::append_packet(std::shared_ptr<const packet::packet_record> pac
             table != nullptr) {
             table->setRowHidden(
                 packet_model_->rowCount() - 1, !display_filter_->matches(record));
+        }
+    }
+    if (!displayed_packet_index_.has_value()) {
+        if (auto* const table = qobject_cast<QTableView*>(packet_model_->parent());
+            table != nullptr && !table->isRowHidden(packet_model_->rowCount() - 1)) {
+            // Show the first captured packet immediately so that the protocol
+            // tree and the byte view are populated without an extra click.
+            table->selectRow(packet_model_->rowCount() - 1);
         }
     }
     if (const auto flow_id = flow_tracker_.ingest(packets_.back());

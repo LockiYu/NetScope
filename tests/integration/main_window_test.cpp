@@ -17,6 +17,7 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStatusBar>
 #include <QTableView>
 #include <QTemporaryDir>
 #include <QTreeWidget>
@@ -392,6 +393,48 @@ TEST(main_window_test, flags_invalid_saved_capture_filter_after_restart) {
     }
     QCoreApplication::setOrganizationName({});
     QCoreApplication::setApplicationName({});
+}
+
+TEST(main_window_test, selects_the_first_captured_packet_automatically) {
+    netscope::ui::main_window window{
+        [](const std::string& name, const netscope::capture::capture_options&) {
+            return netscope::capture::capture_session{
+                std::make_unique<ui_packet_backend>(), name};
+        },
+        [](const std::string&) -> std::optional<std::string> { return std::nullopt; }};
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const tree = window.findChild<QTreeWidget*>(QStringLiteral("protocolTree"));
+    auto* const hex = window.findChild<QPlainTextEdit*>(QStringLiteral("hexView"));
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(tree, nullptr);
+    ASSERT_NE(hex, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+
+    ASSERT_TRUE(table->selectionModel()->hasSelection());
+    EXPECT_GT(tree->topLevelItemCount(), 0);
+    EXPECT_TRUE(hex->toPlainText().contains(QStringLiteral("00 01 02 03")));
+}
+
+TEST(main_window_test, reports_selected_field_byte_range_in_the_status_bar) {
+    netscope::ui::main_window window;
+    auto* const table = window.findChild<QTableView*>(QStringLiteral("packetTable"));
+    auto* const tree = window.findChild<QTreeWidget*>(QStringLiteral("protocolTree"));
+    auto* const status = window.findChild<QStatusBar*>();
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(tree, nullptr);
+    ASSERT_NE(status, nullptr);
+
+    window.append_packet(make_record());
+    QApplication::processEvents();
+    auto* const item = find_item(tree, QStringLiteral("source_address"));
+    ASSERT_NE(item, nullptr);
+    tree->setCurrentItem(item);
+    QApplication::processEvents();
+
+    EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("source_address")));
+    EXPECT_TRUE(status->currentMessage().contains(QStringLiteral("bytes")));
 }
 
 TEST(main_window_test, applies_active_display_filter_to_new_packets_only) {
