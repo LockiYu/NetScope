@@ -104,6 +104,17 @@ TEST(display_filter_test, supports_wireshark_style_field_aliases) {
     EXPECT_TRUE(display_filter{"eth.addr contains \"0a:0b\""}.matches(*tcp));
 }
 
+TEST(display_filter_test, narrows_to_application_protocols_for_the_demo_filter) {
+    const auto dns = dns_record();
+    const auto tcp = tcp_record();
+    const auto* const expression = "(http or tls or dns) and (ipv4 or ipv6)";
+
+    EXPECT_TRUE(display_filter{expression}.matches(*dns));
+    EXPECT_FALSE(display_filter{expression}.matches(*tcp));
+    EXPECT_TRUE(display_filter{"(dns or tls) and (ipv4 or ipv6)"}.matches(*dns));
+    EXPECT_TRUE(display_filter{"dns or tls or icmp"}.matches(*dns));
+}
+
 TEST(display_filter_test, supports_logic_parentheses_strings_and_numbers) {
     const auto packet = tcp_record();
 
